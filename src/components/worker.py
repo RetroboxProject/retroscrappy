@@ -1,23 +1,18 @@
-"""worker.py — Orquesta todo el proceso: recorre sistemas, resuelve juegos en
-SteamGridDB, decide qué asset descargar (auto o vía `interaction`) y actualiza
-gamelist.xml.
-
-Pensado para ejecutarse en un hilo de fondo; toda comunicación con el usuario
-pasa por la interfaz `UserInteraction` (ver interaction.py), nunca por
-tkinter directamente.
-"""
+"""worker.py — Orquesta todo el proceso de artwork de SteamGridDB."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 
-from .clean import clean_name
-from .config import ASSET_DEFS, TOP_N_AUTO, TOP_N_INTERACTIVE
+from .config import (
+    ASSET_DEFS, MODE_AUTO, MODE_MANUAL, MODE_SEMI,
+    SEMI_SCORE_MARGIN, TOP_N_AUTO, TOP_N_INTERACTIVE,
+)
 from .downloader import download_many_bytes, download_to_file
 from .gamelist_io import parse_gamelist, update_gamelist
 from .interaction import UserInteraction
-from .models import GameCandidate, ImageCandidate
+from .models import ImageCandidate
 from .sgdb_client import SGDBClient
 
 
@@ -27,7 +22,7 @@ class ScraperOptions:
     apikey: str
     systems: list[str]
     force: bool = False
-    interactive: bool = False  # si True, el usuario elige la imagen entre varios candidatos
+    mode: str = MODE_SEMI
 
 
 class ScraperCancelled(Exception):
@@ -47,7 +42,7 @@ class Scraper:
             self._ui.log("✗ API key vacía.")
             return
 
-        client = SGDBClient(options.apikey)
+        client = SGDBClient(options.apikey, log=self._ui.log)
 
         for system in options.systems:
             self._check_cancelled()
@@ -73,7 +68,7 @@ class Scraper:
                     images_dir=images_dir,
                     gamelist_path=gamelist,
                     force=options.force,
-                    interactive=options.interactive,
+                    mode=options.mode,
                 )
 
         self._ui.set_status("Proceso completado.")
@@ -94,13 +89,19 @@ class Scraper:
         images_dir: Path,
         gamelist_path: Path,
         force: bool,
-        interactive: bool,
+        mode: str,
     ) -> None:
         to_download: dict[str, Path] = {}
         for key, adef in ASSET_DEFS.items():
+            if adef.get("provider") != "sgdb":
+                continue  # los screenshots los gestiona el worker de metadatos
             dest = images_dir / (file_stem + adef["suffix"])
             if dest.exists() and not force:
-                if not self._ui.confirm_overwrite(dest.name):
+                if mode == MODE_MANUAL:
+                    if not self._ui.confirm_overwrite(dest.name):
+                        continue
+                else:
+                    self._ui.log(f"  — {dest.name} ya existe: se conserva (usa 'forzar' para sustituir)")
                     continue
             to_download[key] = dest
 
@@ -109,7 +110,7 @@ class Scraper:
             return
 
         self._ui.log(f"▸ {name}: buscando en SteamGridDB…")
-        game_id = self._resolve_game_id(client, name)
+        game_id = self._resolve_game_id(client, name, mode)
         if not game_id:
             self._ui.log(f"✗ No se pudo resolver '{name}', saltando.")
             return
@@ -118,7 +119,7 @@ class Scraper:
         for key, dest in to_download.items():
             self._check_cancelled()
             adef = ASSET_DEFS[key]
-            limit = TOP_N_INTERACTIVE if interactive else TOP_N_AUTO
+            limit = TOP_N_AUTO if mode == MODE_AUTO else TOP_N_INTERACTIVE
             candidates = client.get_assets(game_id, adef["fetch"], limit)
 
             if not candidates:
@@ -126,7 +127,7 @@ class Scraper:
                 downloaded[key] = False
                 continue
 
-            chosen = self._pick_image(candidates, adef["label"], interactive)
+            chosen = self._pick_image(candidates, adef["label"], mode)
             if chosen is None:
                 self._ui.log(f"  — '{key}' saltado.")
                 downloaded[key] = False
@@ -139,44 +140,77 @@ class Scraper:
         if update_gamelist(gamelist_path, name, file_stem, downloaded):
             self._ui.log("  ✓ gamelist.xml actualizado")
 
-    # ── Resolución del juego (búsqueda + desambiguación) ────────────────
+    # ── Resolución del juego ─────────────────────────────────────────────
 
-    def _resolve_game_id(self, client: SGDBClient, name: str) -> int | None:
+    def _resolve_game_id(self, client: SGDBClient, name: str, mode: str) -> int | None:
         results = client.search_games(name)
         if not results:
             self._ui.log(f"  ✗ Sin resultados en SGDB para '{name}'")
             return None
 
-        if len(results) == 1:
+        # Tras la desduplicación por id (ver SGDBClient.search_games) puede
+        # que hayan quedado menos candidatos de los que trajo el wrapper.
+        n = len(results)
+        if n == 1:
+            if mode == MODE_MANUAL:
+                self._ui.log(f"  ? Un único candidato para '{name}': confirmar en diálogo.")
+                return self._ui.choose_game(name, results)
+            self._ui.log(f"  → juego: único candidato «{results[0].name}» ({results[0].year or '?'})")
             return results[0].id
 
         exact = [r for r in results if r.name.lower() == name.lower()]
-        if len(exact) == 1:
-            return exact[0].id
 
-        chosen_id = self._ui.choose_game(name, results)
-        return chosen_id
+        if mode == MODE_AUTO:
+            chosen = exact[0] if exact else results[0]
+            self._ui.log(
+                f"  → juego: modo auto «{chosen.name}» "
+                f"({'coincidencia exacta' if exact else 'primer candidato'})"
+            )
+            return chosen.id
 
-    # ── Selección de imagen (auto o manual) ─────────────────────────────
+        if len(exact) == 1 and mode == MODE_SEMI:
+            r = exact[0]
+            self._ui.log(f"  → juego: coincidencia exacta «{r.name}» ({r.year or '?'})")
+            return r.id
+
+        reason = f"sin coincidencia exacta entre {n}" if not exact else f"{len(exact)} coincidencias exactas entre {n}"
+        self._ui.log(f"  ? Conflicto ({reason}): preguntando. Candidatos:")
+        for r in results[:8]:
+            tag = " ✓" if r.name.lower() == name.lower() else ""
+            self._ui.log(f"      · «{r.name}» ({r.year or '?'}){tag}")
+        return self._ui.choose_game(name, results)
+
+    # ── Selección de imagen ──────────────────────────────────────────────
 
     def _pick_image(
         self,
         candidates: list[ImageCandidate],
         label: str,
-        interactive: bool,
+        mode: str,
     ) -> ImageCandidate | None:
-        if interactive:
-            # Previsualizaciones en paralelo y usando el thumb pequeño que ya
-            # sirve SGDB (no la imagen a resolución completa) — mucho más
-            # rápido, y sigue en el hilo de trabajo, no en el de la GUI.
-            self._check_cancelled()
-            previews = download_many_bytes([c.thumb_url for c in candidates])
-            for c, preview in zip(candidates, previews):
-                c.preview = preview
-            return self._ui.choose_image(label, candidates)
-
-        # Modo automático: mejor score neto entre los TOP_N_AUTO primeros
-        # (get_assets ya devuelve la lista ordenada por score descendente).
         best = candidates[0]
-        self._ui.log(f"  → {label}: score={best.score:+d} {best.width}×{best.height} ({best.author})")
+
+        if mode == MODE_MANUAL:
+            return self._show_gallery(label, candidates)
+
+        if mode == MODE_AUTO:
+            self._ui.log(f"  → {label}: auto, score={best.score:+d} {best.width}×{best.height} ({best.author})")
+            return best
+
+        second = candidates[1] if len(candidates) > 1 else None
+        margin = (best.score - second.score) if second else None
+        conflict = best.score <= 0 or (margin is not None and margin <= SEMI_SCORE_MARGIN)
+        if conflict:
+            detalle = f"score {best.score:+d} no positivo" if best.score <= 0 else f"margen {margin} <= {SEMI_SCORE_MARGIN}"
+            self._ui.log(f"  ? Conflicto de {label} ({detalle}): mostrando galería.")
+            return self._show_gallery(label, candidates)
+
+        self._ui.log(f"  → {label}: semi-auto, score={best.score:+d} (margen {margin} sobre el 2º) {best.width}×{best.height} ({best.author})")
         return best
+
+    def _show_gallery(self, label: str, candidates: list[ImageCandidate]) -> ImageCandidate | None:
+        self._check_cancelled()
+        previews = download_many_bytes([c.thumb_url for c in candidates])
+        for c, preview in zip(candidates, previews):
+            c.preview = preview
+        return self._ui.choose_image(label, candidates)

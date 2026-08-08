@@ -2,64 +2,64 @@
 
 from __future__ import annotations
 
-import tkinter as tk
-from tkinter import ttk
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
+    QListWidgetItem, QPushButton, QAbstractItemView,
+)
+from PySide6.QtCore import Qt
 
 from ..models import GameCandidate
 
 
-class GamePickerDialog(tk.Toplevel):
-    def __init__(self, parent: tk.Misc, query: str, candidates: list[GameCandidate]):
+class GamePickerDialog(QDialog):
+    def __init__(self, parent, query: str, candidates: list[GameCandidate]):
         super().__init__(parent)
-        self.title(f"Elegir juego — {query}")
-        self.geometry("520x420")
-        self.transient(parent)
-        self.grab_set()
-        self.resizable(True, True)
+        self.setWindowTitle(f"Elegir juego — {query}")
+        self.resize(520, 420)
+        self.setModal(True)
 
-        self._result: int | None = None
         self._candidates = candidates
+        self._result: int | None = None
 
-        ttk.Label(
-            self, text=f"Varios resultados para «{query}». Elige el correcto:",
-            wraplength=480, padding=(10, 10),
-        ).pack(fill="x")
+        layout = QVBoxLayout(self)
 
-        list_frame = ttk.Frame(self, padding=(10, 0))
-        list_frame.pack(fill="both", expand=True)
+        label = QLabel(f"Varios resultados para «{query}». Elige el correcto:")
+        label.setWordWrap(True)
+        layout.addWidget(label)
 
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical")
-        self._listbox = tk.Listbox(
-            list_frame, yscrollcommand=scrollbar.set, activestyle="dotbox", font=("TkDefaultFont", 10),
-        )
-        scrollbar.config(command=self._listbox.yview)
-        self._listbox.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
+        self._list_widget = QListWidget()
+        self._list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
         for c in candidates:
             year = c.year if c.year else "?"
-            self._listbox.insert("end", f"{c.name}   ({year})   [id={c.id}]")
+            item = QListWidgetItem(f"{c.name}   ({year})   [id={c.id}]")
+            self._list_widget.addItem(item)
         if candidates:
-            self._listbox.selection_set(0)
-        self._listbox.bind("<Double-Button-1>", lambda _e: self._on_choose())
+            self._list_widget.setCurrentRow(0)
+        self._list_widget.itemDoubleClicked.connect(self._on_choose)
+        layout.addWidget(self._list_widget)
 
-        btns = ttk.Frame(self, padding=10)
-        btns.pack(fill="x")
-        ttk.Button(btns, text="Saltar este juego", command=self._on_skip).pack(side="left")
-        ttk.Button(btns, text="Elegir", command=self._on_choose).pack(side="right")
-
-        self.protocol("WM_DELETE_WINDOW", self._on_skip)
+        btn_layout = QHBoxLayout()
+        skip_btn = QPushButton("Saltar este juego")
+        skip_btn.clicked.connect(self._on_skip)
+        btn_layout.addWidget(skip_btn)
+        btn_layout.addStretch()
+        choose_btn = QPushButton("Elegir")
+        choose_btn.setDefault(True)
+        choose_btn.clicked.connect(self._on_choose)
+        btn_layout.addWidget(choose_btn)
+        layout.addLayout(btn_layout)
 
     def _on_choose(self) -> None:
-        sel = self._listbox.curselection()
-        if sel:
-            self._result = self._candidates[sel[0]].id
-        self.destroy()
+        items = self._list_widget.selectedItems()
+        if items:
+            idx = self._list_widget.row(items[0])
+            self._result = self._candidates[idx].id
+        self.accept()
 
     def _on_skip(self) -> None:
         self._result = None
-        self.destroy()
+        self.reject()
 
-    def show(self) -> int | None:
-        self.wait_window(self)
+    def exec(self) -> int | None:
+        super().exec()
         return self._result

@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog
+
+from PySide6.QtWidgets import QFileDialog
 
 
-def ask_roms_folder(parent: tk.Misc, initial: str | None = None) -> Path | None:
-    chosen = filedialog.askdirectory(
-        parent=parent,
-        title="Selecciona la carpeta roms/",
-        initialdir=initial or str(Path.home()),
-        mustexist=True,
+def ask_roms_folder(parent, initial: str | None = None) -> Path | None:
+    chosen = QFileDialog.getExistingDirectory(
+        parent,
+        "Selecciona la carpeta roms/",
+        initial or str(Path.home()),
     )
     return Path(chosen) if chosen else None

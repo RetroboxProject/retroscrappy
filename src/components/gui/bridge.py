@@ -1,62 +1,96 @@
-"""bridge.py — Implementación de UserInteraction basada en tkinter.
+"""bridge.py — Implementación de UserInteraction basada en PySide6.
 
-tkinter solo puede crear/tocar widgets desde el hilo principal, pero el
-scraping ocurre en un hilo de fondo (para no congelar la ventana). Este
-puente resuelve el cruce: cada método que necesita abrir un diálogo
-programa su ejecución en el hilo principal con `root.after(0, ...)` y
-espera el resultado en una `queue.Queue`, bloqueando solo el hilo de
-fondo (el hilo de tkinter sigue respondiendo con normalidad).
+Usa señales Qt con Qt.QueuedConnection + QWaitCondition para bloquear
+el hilo de fondo mientras se muestra un diálogo modal en el hilo principal.
 """
 
 from __future__ import annotations
 
-import queue
-import tkinter as tk
-from tkinter import messagebox
 from typing import Callable
 
+from PySide6.QtCore import QObject, Signal, Slot, Qt, QMutex, QWaitCondition
+
 from ..models import GameCandidate, ImageCandidate
-from .game_picker import GamePickerDialog
-from .image_picker import ImagePickerDialog
 
 
-class TkBridge:
-    def __init__(self, root: tk.Tk, log_fn: Callable[[str], None], status_fn: Callable[[str], None]):
-        self._root = root
-        self._log_fn = log_fn
-        self._status_fn = status_fn
+class BridgeSignals(QObject):
+    """Señales compartidas entre el hilo principal (MainWindow) y el worker."""
+
+    log_signal = Signal(str)
+    status_signal = Signal(str)
+
+    # Diálogos solicitados por el worker -> hilo principal los muestra
+    choose_game_requested = Signal(str, list)      # query, list[GameCandidate]
+    choose_image_requested = Signal(str, list)     # label, list[ImageCandidate]
+    confirm_overwrite_requested = Signal(str)      # filename
+
+    # Resultados devueltos por el hilo principal -> worker
+    game_chosen = Signal(object)                   # int | None
+    image_chosen = Signal(object)                  # ImageCandidate | None
+    overwrite_confirmed = Signal(bool)             # bool
+
+
+class QtBridge:
+    def __init__(self, signals: BridgeSignals):
+        self._signals = signals
+        self._mutex = QMutex()
+        self._wait_condition = QWaitCondition()
+        self._pending_result = None
 
     # ── UserInteraction ──────────────────────────────────────────────────
 
     def choose_game(self, query: str, candidates: list[GameCandidate]) -> int | None:
-        return self._run_on_main(lambda: GamePickerDialog(self._root, query, candidates).show())
+        return self._run_dialog(
+            lambda: self._signals.choose_game_requested.emit(query, candidates),
+            self._signals.game_chosen,
+        )
 
     def choose_image(self, label: str, candidates: list[ImageCandidate]) -> ImageCandidate | None:
-        return self._run_on_main(lambda: ImagePickerDialog(self._root, label, candidates).show())
+        return self._run_dialog(
+            lambda: self._signals.choose_image_requested.emit(label, candidates),
+            self._signals.image_chosen,
+        )
 
     def confirm_overwrite(self, filename: str) -> bool:
-        return self._run_on_main(
-            lambda: messagebox.askyesno("Archivo existente", f"Ya existe «{filename}». ¿Sobreescribir?")
+        return self._run_dialog(
+            lambda: self._signals.confirm_overwrite_requested.emit(filename),
+            self._signals.overwrite_confirmed,
         )
 
     def log(self, message: str) -> None:
-        self._root.after(0, self._log_fn, message)
+        self._signals.log_signal.emit(message)
 
     def set_status(self, message: str) -> None:
-        self._root.after(0, self._status_fn, message)
+        self._signals.status_signal.emit(message)
 
     # ── Interno ──────────────────────────────────────────────────────────
 
-    def _run_on_main(self, factory: Callable[[], object]):
-        """Ejecuta `factory` en el hilo principal y devuelve su resultado,
-        bloqueando el hilo llamante (de fondo) hasta que esté disponible."""
-        result_q: queue.Queue = queue.Queue(maxsize=1)
+    def _run_dialog(self, emit_fn: Callable[[], None], result_signal: Signal):
+        """Bloquea el hilo de fondo hasta que el hilo principal emita el resultado.
 
-        def task():
-            try:
-                result_q.put(factory())
-            except Exception:
-                result_q.put(None)
+        Usa QMutex + QWaitCondition para sincronización entre hilos.
+        """
+        self._mutex.lock()
+        try:
+            self._pending_result = None
+            # Conectamos temporalmente para recibir el resultado
+            result_signal.connect(self._on_result_received, Qt.QueuedConnection)
+            emit_fn()
+            # Bloqueamos el hilo worker hasta que wakeAll() sea llamado
+            while self._pending_result is None:
+                self._wait_condition.wait(self._mutex)
+            result = self._pending_result
+            result_signal.disconnect(self._on_result_received)
+            return result
+        finally:
+            self._mutex.unlock()
 
-        self._root.after(0, task)
-        return result_q.get()
+    @Slot(object)
+    def _on_result_received(self, result):
+        """Slot invocado en el hilo worker cuando el main thread emite el resultado."""
+        self._mutex.lock()
+        try:
+            self._pending_result = result
+            self._wait_condition.wakeAll()
+        finally:
+            self._mutex.unlock()

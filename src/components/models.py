@@ -50,3 +50,53 @@ class AssetJob:
     """Un asset (thumb/marquee) pendiente de descargar para un juego concreto."""
     key: str            # "thumb" | "marquee"
     dest: Path
+
+
+@dataclass
+class GameMetadata:
+    """Metadatos textuales de un juego, listos para volcar a gamelist.xml.
+    Todos los campos son opcionales: si IGDB no trae el dato, se deja vacío
+    y ese tag del XML simplemente no se toca."""
+    developer: str = ""
+    publisher: str = ""
+    genres: list[str] = field(default_factory=list)
+    family: str = ""              # franquicia/saga
+    players: str = ""             # heurística aproximada, ver igdb_client.py
+    release_date: str = ""        # formato EmulationStation: YYYYMMDDT000000
+    release_region: str = ""      # "europe" | "north_america" | "japan" | ... (informativo, para el log)
+
+    def has_data(self) -> bool:
+        return any([self.developer, self.publisher, self.genres, self.family, self.players, self.release_date])
+
+@dataclass
+class GameMetadata:
+    """Metadatos textuales de un juego, listos para volcar a gamelist.xml.
+    Todos los campos son opcionales: si la fuente no trae el dato, se deja vacío
+    y ese tag del XML simplemente no se toca."""
+    developer: str = ""
+    publisher: str = ""
+    genres: list[str] = field(default_factory=list)
+    family: str = ""
+    players: str = ""
+    release_date: str = ""
+    release_region: str = ""
+    desc: str = ""
+    rating: str = ""
+    screenshot_url: str = ""  # media "ss" (SS) / screenshots (IGDB); lo baja el worker de metadatos
+
+    def has_data(self) -> bool:
+        return any([
+            self.developer, self.publisher, self.genres, self.family,
+            self.players, self.release_date, self.desc, self.rating,
+            self.screenshot_url,
+        ])
+
+
+
+@dataclass
+class GameDetails:
+    """Entrada completa de gamelist.xml para la pantalla de previsualización."""
+    name: str
+    file_stem: str
+    metadata: dict[str, str]   # tag -> texto (genre, desc, releasedate, ...)
+    images: dict[str, str]     # xml_tag (thumbnail/marquee/image) -> ruta relativa

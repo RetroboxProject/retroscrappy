@@ -1,22 +1,25 @@
-"""sgdb_client.py — Envoltorio sobre el paquete `steamgrid`.
-
-Toda la interacción con la librería externa vive aquí, y sale convertida a
-los dataclasses de models.py. El resto de la aplicación (worker, GUI) nunca
-importa `steamgrid` directamente, así que si esa librería cambia solo hay
-que tocar este fichero.
-"""
+"""sgdb_client.py — Envoltorio sobre el paquete `steamgrid` + llamadas directas
+a la API REST v2 de SteamGridDB para los screenshots."""
 
 from __future__ import annotations
 
+from typing import Callable
+
+import requests
 from steamgrid import Grid, SteamGridDB
 
 from .config import GRID_PREFERRED_DIMS
 from .models import GameCandidate, ImageCandidate
 
+SGDB_API_URL = "https://www.steamgriddb.com/api/v2"
+TIMEOUT = 30
+
 
 class SGDBClient:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, log: Callable[[str], None] | None = None):
+        self._api_key = api_key
         self._client = SteamGridDB(api_key)
+        self._log = log or (lambda m: None)
 
     # ── Búsqueda de juego ────────────────────────────────────────────────
 
@@ -27,26 +30,22 @@ class SGDBClient:
             return []
         if not results:
             return []
-        out = []
+
+        # Desduplicar por id: el wrapper a veces devuelve el mismo juego
+        # varias veces (mismo nombre, a veces con IDs distintos para ports).
+        seen: dict[int, GameCandidate] = {}
         for r in results:
             year = r.release_date.year if getattr(r, "release_date", None) else None
-            out.append(GameCandidate(id=r.id, name=r.name, year=year))
-        return out
+            if r.id not in seen:
+                seen[r.id] = GameCandidate(id=r.id, name=r.name, year=year)
+        return list(seen.values())
 
     # ── Obtención de assets ──────────────────────────────────────────────
 
     def get_assets(self, game_id: int, fetch_type: str, limit: int) -> list[ImageCandidate]:
-        """
-        Devuelve hasta `limit` assets PNG estáticos para game_id.
+        if fetch_type == "screenshots":
+            return self._fetch_screenshots(game_id, limit)
 
-        Para grids:
-          1. Pide solo 600×900 (GRID_PREFERRED_DIMS) a la API.
-          2. Si no hay resultados, cualquier dimensión filtrando ratio 2:3.
-          3. Si tampoco hay ratio 2:3, cualquier PNG estático.
-
-        Para logos/heroes: descarga todo y filtra PNG estáticos manualmente
-        (el wrapper tiene un bug de espacio final en ImageType.Static).
-        """
         try:
             if fetch_type == "grids":
                 items = self._fetch_raw_grids(game_id, {"dimensions": GRID_PREFERRED_DIMS})
@@ -57,7 +56,7 @@ class SGDBClient:
                     png_items = [a for a in all_items if self._is_static_png(a)]
                     items = [a for a in png_items if self._is_2_3_ratio(a)]
                     if not items:
-                        items = png_items  # fallback final: cualquier PNG
+                        items = png_items
 
             elif fetch_type == "logos":
                 raw = self._client.get_logos_by_gameid([game_id])
@@ -76,14 +75,73 @@ class SGDBClient:
         except Exception:
             return []
 
+    # ── Screenshots vía API REST v2 ──────────────────────────────────────
+
+    def _fetch_screenshots(self, game_id: int, limit: int) -> list[ImageCandidate]:
+        url = f"{SGDB_API_URL}/screenshots/game/{game_id}"
+        try:
+            resp = requests.get(
+                url,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                params={"limit": max(limit * 2, 20)},
+                timeout=TIMEOUT,
+            )
+        except requests.RequestException as e:
+            self._log(f"  ✗ Screenshots: fallo de red ({e.__class__.__name__}: {e})")
+            return []
+
+        if resp.status_code == 404:
+            # juego sin screenshots curadas en SGDB, no es un error
+            self._log(f"  · Screenshots: este juego no tiene screenshots curadas en SGDB")
+            return []
+        if resp.status_code != 200:
+            self._log(f"  ✗ Screenshots: HTTP {resp.status_code} — {(resp.text or '')[:150]}")
+            return []
+
+        try:
+            payload = resp.json()
+        except ValueError:
+            self._log(f"  ✗ Screenshots: respuesta no JSON — {(resp.text or '')[:150]}")
+            return []
+
+        raw_items = payload.get("data") or []
+        if not raw_items:
+            self._log(f"  · Screenshots: SGDB no tiene screenshots para este juego")
+            return []
+
+        candidates = []
+        discarded = 0
+        for s in raw_items:
+            asset_url = s.get("url") or ""
+            mime = (s.get("mime") or "").lower()
+            if not asset_url:
+                continue
+            # descarta animados/vídeo
+            lower_url = asset_url.lower()
+            if lower_url.endswith((".webm", ".gif", ".webp", ".mp4", ".avi", ".mov")):
+                discarded += 1
+                continue
+            if mime and not mime.startswith("image/"):
+                discarded += 1
+                continue
+            candidates.append(ImageCandidate(
+                url=asset_url,
+                thumb_url=s.get("thumb") or asset_url,
+                width=s.get("width") or 0,
+                height=s.get("height") or 0,
+                author=(s.get("author") or {}).get("name") or "?",
+                upvotes=s.get("upvotes") or 0,
+                downvotes=s.get("downvotes") or 0,
+                mime=mime,
+            ))
+
+        if not candidates and discarded:
+            self._log(f"  · Screenshots: {discarded} candidatos descartados por ser vídeo/animados")
+        return sorted(candidates, key=lambda c: c.score, reverse=True)[:limit]
+
     # ── Helpers internos ─────────────────────────────────────────────────
 
     def _fetch_raw_grids(self, game_id: int, extra_queries: dict) -> list:
-        """
-        Llama directamente a _http.get_grid() para poder inyectar parámetros
-        extra (como dimensions=600x900) que la API pública del wrapper no
-        expone.
-        """
         try:
             payloads = self._client._http.get_grid(
                 [game_id], "game",
@@ -97,7 +155,6 @@ class SGDBClient:
 
     @staticmethod
     def _is_static_png(asset) -> bool:
-        """Descarta WebP y GIF; acepta PNG o mime vacío (la URL manda)."""
         mime = (getattr(asset, "mime", "") or "").lower()
         url = (getattr(asset, "url", "") or "").lower()
         if mime and "png" not in mime:
@@ -119,8 +176,6 @@ class SGDBClient:
         author = asset.author.name if getattr(asset, "author", None) else "?"
         return ImageCandidate(
             url=asset.url,
-            # SGDB ya sirve una miniatura pequeña ("thumb"); si no viene, se
-            # cae a la url completa (peor caso, pero sigue funcionando).
             thumb_url=getattr(asset, "thumbnail", None) or asset.url,
             width=asset.width or 0,
             height=asset.height or 0,

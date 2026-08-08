@@ -1,0 +1,1466 @@
+=== src/main.py ===
+#!/usr/bin/env python3
+"""
+main.py — Punto de entrada de la aplicación gráfica.
+
+Uso:
+    python main.py
+
+Todo se configura desde la ventana: carpeta roms/, API key, sistemas a
+procesar y si las imágenes se eligen a mano (galería) o automáticamente.
+"""
+
+from components.gui.main_window import main
+
+if __name__ == "__main__":
+    main()
+====
+=== src/gui/*.py ===
+====
+=== src/components/clean.py ===
+"""clean.py — Normalización de nombres de fichero (≡ limpiar_nombre() en bash)."""
+
+from __future__ import annotations
+
+import re
+
+_CLEAN_RE = re.compile(r'[/\\:*?"<>|]')
+
+
+def clean_name(name: str) -> str:
+    """
+    Sustituye los caracteres no válidos en nombres de fichero  / \\ : * ? " < > |
+    por '-' y recorta espacios. Debe coincidir exactamente con limpiar_nombre()
+    en los scripts de sincronización en bash, ya que las rutas de imagen en
+    disco dependen de esta convención.
+    """
+    return _CLEAN_RE.sub("-", name).strip()
+====
+=== src/components/config.py ===
+"""
+config.py — Constantes compartidas por todo el paquete.
+
+Tener todo esto en un único sitio evita "números mágicos" repartidos por el
+código y hace trivial ajustar el comportamiento (p.ej. añadir un nuevo
+sistema, o cambiar cuántos candidatos se muestran) sin tocar la lógica.
+"""
+
+from __future__ import annotations
+
+# Sistemas que este script sabe procesar (subcarpetas de roms/)
+SUPPORTED_SYSTEMS = ["steam", "heroic", "lutris"]
+
+# Nombres de "juego" ficticios que crean los launchers y que hay que ignorar
+LAUNCHER_NAMES = {"battle.net", "ubisoft connect", "epic games"}
+
+# Cuántos candidatos se piden a la API / se muestran al usuario
+TOP_N_AUTO = 3            # modo automático: el mejor de estos N por score neto
+TOP_N_INTERACTIVE = 10    # modo interactivo: se muestran hasta N para elegir
+
+# Dimensiones preferidas para grids (cover vertical de EmulationStation)
+GRID_PREFERRED_DIMS = "600x900"
+
+# Tipos de asset gestionados por este script.
+#   xml_tag : etiqueta en gamelist.xml
+#   suffix  : sufijo del archivo en disco (sobre clean_name())
+#   fetch   : tipo de asset en la API de SteamGridDB ("grids" | "logos" | "heroes")
+ASSET_DEFS = {
+    "thumb": {
+        "xml_tag": "thumbnail",
+        "suffix": "-thumb.png",
+        "label": "Thumb / Cover (grid vertical 2:3)",
+        "fetch": "grids",
+    },
+    "marquee": {
+        "xml_tag": "marquee",
+        "suffix": "-marquee.png",
+        "label": "Marquee / Logo",
+        "fetch": "logos",
+    },
+}
+
+# ── IGDB (metadatos textuales) ────────────────────────────────────────────
+
+IGDB_OAUTH_URL = "https://id.twitch.tv/oauth2/token"
+IGDB_API_URL = "https://api.igdb.com/v4"
+
+# Enum "region" de IGDB (campo release_dates.region, legacy pero aún activo).
+# https://api.igdb.com/v4/igdbapi.proto
+IGDB_REGION_EUROPE = 1
+IGDB_REGION_NORTH_AMERICA = 2
+IGDB_REGION_AUSTRALIA = 3
+IGDB_REGION_NEW_ZEALAND = 4
+IGDB_REGION_JAPAN = 5
+IGDB_REGION_CHINA = 6
+IGDB_REGION_ASIA = 7
+IGDB_REGION_WORLDWIDE = 8
+
+IGDB_REGION_NAMES = {
+    IGDB_REGION_EUROPE: "europe",
+    IGDB_REGION_NORTH_AMERICA: "north_america",
+    IGDB_REGION_AUSTRALIA: "australia",
+    IGDB_REGION_NEW_ZEALAND: "new_zealand",
+    IGDB_REGION_JAPAN: "japan",
+    IGDB_REGION_CHINA: "china",
+    IGDB_REGION_ASIA: "asia",
+    IGDB_REGION_WORLDWIDE: "worldwide",
+}
+
+# Orden de preferencia pedido: Europa > EEUU/Norteamérica > Japón > (lo que haya)
+IGDB_REGION_PRIORITY = [
+    IGDB_REGION_EUROPE,
+    IGDB_REGION_NORTH_AMERICA,
+    IGDB_REGION_JAPAN,
+    IGDB_REGION_WORLDWIDE,
+]
+
+# IDs de plataforma IGDB relevantes para steam/heroic/lutris (todo PC).
+# 6 = PC (Microsoft Windows), 3 = Linux, 14 = Mac
+IGDB_PC_PLATFORM_IDS = [6, 3, 14]
+
+TOP_N_GAME_SEARCH = 10  # candidatos a mostrar al desambiguar un juego en IGDB====
+=== src/components/downloader.py ===
+"""downloader.py — Descarga de assets finales y de previsualizaciones para la GUI."""
+
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import requests
+
+TIMEOUT = 30
+PREVIEW_WORKERS = 6  # descargas de miniatura en paralelo
+
+
+def download_to_file(url: str, dest: Path) -> bool:
+    """Descarga `url` a `dest`, creando carpetas intermedias. Devuelve éxito/fallo."""
+    try:
+        r = requests.get(url, timeout=TIMEOUT, stream=True)
+        r.raise_for_status()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with open(dest, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+        return True
+    except Exception:
+        return False
+
+
+def download_bytes(url: str) -> bytes | None:
+    """Descarga `url` en memoria (usado para las miniaturas de la GUI)."""
+    try:
+        r = requests.get(url, timeout=TIMEOUT)
+        r.raise_for_status()
+        return r.content
+    except Exception:
+        return None
+
+
+def download_many_bytes(urls: list[str]) -> list[bytes | None]:
+    """Descarga varias URLs en paralelo, preservando el orden de entrada.
+    Usado para las previsualizaciones de la galería, que si no tardan
+    demasiado al pedirlas una a una en serie."""
+    if not urls:
+        return []
+    with ThreadPoolExecutor(max_workers=min(PREVIEW_WORKERS, len(urls))) as pool:
+        return list(pool.map(download_bytes, urls))
+====
+=== src/components/gamelist_io.py ===
+"""gamelist_io.py — Lectura y escritura de gamelist.xml de EmulationStation.
+
+Aislar todo el manejo de XML aquí significa que el resto del código
+(la lógica de negocio y la GUI) no necesita saber nada sobre ElementTree.
+"""
+
+from __future__ import annotations
+
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+from .clean import clean_name
+from .config import ASSET_DEFS, LAUNCHER_NAMES
+from .models import GameEntry, GameMetadata
+
+
+def parse_gamelist(gamelist_path: Path) -> list[GameEntry]:
+    """Devuelve la lista de juegos a procesar (excluyendo entradas de launcher)."""
+    tree = ET.parse(gamelist_path)
+    root = tree.getroot()
+    games: list[GameEntry] = []
+
+    for game_el in root.findall("game"):
+        name_el = game_el.find("name")
+        if name_el is None or not (name_el.text or "").strip():
+            continue
+        name = name_el.text.strip()
+        if name.lower() in LAUNCHER_NAMES:
+            continue
+
+        # El stem del fichero launcher (.steam/.heroic/.lutris) es la fuente
+        # canónica del nombre en disco: coincide con el prefijo de las imágenes.
+        path_el = game_el.find("path")
+        if path_el is not None and (path_el.text or "").strip():
+            file_stem = Path(path_el.text.strip()).stem
+        else:
+            file_stem = clean_name(name)  # fallback si falta <path>
+
+        games.append(GameEntry(name=name, file_stem=file_stem))
+
+    return games
+
+
+def update_gamelist(
+    gamelist_path: Path,
+    name: str,
+    file_stem: str,
+    downloaded: dict[str, bool],
+) -> bool:
+    """
+    Actualiza o inserta <thumbnail>/<marquee> en el <game> cuyo <name> coincide.
+    Solo toca los tags de los assets descargados correctamente.
+    Devuelve True si se actualizó el XML, False si no se encontró el juego.
+    """
+    successful = {k: v for k, v in downloaded.items() if v}
+    if not successful:
+        return False
+
+    tree = ET.parse(gamelist_path)
+    root = tree.getroot()
+
+    target = None
+    for game_el in root.findall("game"):
+        name_el = game_el.find("name")
+        if name_el is not None and (name_el.text or "").strip() == name:
+            target = game_el
+            break
+
+    if target is None:
+        return False
+
+    for key in successful:
+        adef = ASSET_DEFS[key]
+        xml_tag = adef["xml_tag"]
+        rel_path = f"./images/{file_stem}{adef['suffix']}"
+
+        el = target.find(xml_tag)
+        if el is None:
+            el = ET.SubElement(target, xml_tag)
+        el.text = rel_path
+
+    ET.indent(tree, space="\t")
+    tree.write(gamelist_path, encoding="unicode", xml_declaration=True)
+    return True
+
+
+# ── Tags de texto que gestiona IGDB (no pisan lo que ya escribe ScreenScraper
+# salvo que se pida force=True) ───────────────────────────────────────────
+
+_METADATA_TAGS = {
+    "developer": lambda m: m.developer,
+    "publisher": lambda m: m.publisher,
+    "genre": lambda m: ", ".join(m.genres),
+    "family": lambda m: m.family,
+    "players": lambda m: m.players,
+    "releasedate": lambda m: m.release_date,
+}
+
+
+def update_gamelist_metadata(
+    gamelist_path: Path,
+    name: str,
+    metadata: GameMetadata,
+    force: bool = False,
+) -> list[str]:
+    """
+    Rellena <developer>/<publisher>/<genre>/<family>/<players>/<releasedate>
+    en el <game> cuyo <name> coincide, con lo que traiga `metadata`.
+
+    Por defecto (force=False) NUNCA sobreescribe un tag que ya tenga texto:
+    esto es clave porque ScreenScraper ya rellena varios de estos campos, y
+    no queremos pisar datos buenos con datos de IGDB si ya estaban.
+
+    Devuelve la lista de tags que se han escrito (para loguear en la GUI).
+    """
+    if not metadata.has_data():
+        return []
+
+    tree = ET.parse(gamelist_path)
+    root = tree.getroot()
+
+    target = None
+    for game_el in root.findall("game"):
+        name_el = game_el.find("name")
+        if name_el is not None and (name_el.text or "").strip() == name:
+            target = game_el
+            break
+
+    if target is None:
+        return []
+
+    written: list[str] = []
+    for tag, getter in _METADATA_TAGS.items():
+        value = getter(metadata)
+        if not value:
+            continue
+
+        el = target.find(tag)
+        existing = (el.text or "").strip() if el is not None else ""
+        if existing and not force:
+            continue  # ya había dato: no lo tocamos
+
+        if el is None:
+            el = ET.SubElement(target, tag)
+        el.text = value
+        written.append(tag)
+
+    if written:
+        ET.indent(tree, space="\t")
+        tree.write(gamelist_path, encoding="unicode", xml_declaration=True)
+
+    return written====
+=== src/components/igdb_client.py ===
+"""igdb_client.py — Envoltorio sobre la API REST de IGDB (v4).
+
+IGDB usa credenciales de aplicación de Twitch (Client ID + Client Secret,
+gratis e instantáneas en https://dev.twitch.tv/console/apps). No hay
+wrapper de terceros que merezca la pena aquí, así que hablamos directo con
+la API vía `requests` y el lenguaje de consulta Apicalypse.
+
+Como con sgdb_client.py: toda la conversión a nuestros dataclasses vive
+aquí, para que worker.py y la GUI no sepan nada de la forma de la API.
+"""
+
+from __future__ import annotations
+
+import time
+from datetime import datetime, timezone
+
+import requests
+
+from .config import (
+    IGDB_API_URL,
+    IGDB_OAUTH_URL,
+    IGDB_PC_PLATFORM_IDS,
+    IGDB_REGION_NAMES,
+    IGDB_REGION_PRIORITY,
+    TOP_N_GAME_SEARCH,
+)
+from .models import GameCandidate, GameMetadata
+
+TIMEOUT = 30
+
+
+class IGDBAuthError(Exception):
+    pass
+
+
+class IGDBClient:
+    def __init__(self, client_id: str, client_secret: str):
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._token: str | None = None
+        self._token_expires_at: float = 0.0
+
+    # ── Autenticación ────────────────────────────────────────────────────
+
+    def _ensure_token(self) -> str:
+        if self._token and time.monotonic() < self._token_expires_at:
+            return self._token
+
+        resp = requests.post(
+            IGDB_OAUTH_URL,
+            params={
+                "client_id": self._client_id,
+                "client_secret": self._client_secret,
+                "grant_type": "client_credentials",
+            },
+            timeout=TIMEOUT,
+        )
+        if resp.status_code != 200:
+            raise IGDBAuthError(
+                f"No se pudo autenticar en Twitch/IGDB ({resp.status_code}): {resp.text[:200]}"
+            )
+        data = resp.json()
+        self._token = data["access_token"]
+        # Restamos un margen de 60s para no usar un token a punto de caducar.
+        self._token_expires_at = time.monotonic() + data.get("expires_in", 3600) - 60
+        return self._token
+
+    def _headers(self) -> dict:
+        return {
+            "Client-ID": self._client_id,
+            "Authorization": f"Bearer {self._ensure_token()}",
+        }
+
+    def _query(self, endpoint: str, apicalypse_body: str) -> list[dict]:
+        resp = requests.post(
+            f"{IGDB_API_URL}/{endpoint}",
+            headers=self._headers(),
+            data=apicalypse_body,
+            timeout=TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return []
+        return resp.json() or []
+
+    # ── Búsqueda de juego ────────────────────────────────────────────────
+
+    def search_games(self, name: str) -> list[GameCandidate]:
+        safe_name = name.replace('"', "'")
+        body = (
+            f'search "{safe_name}"; '
+            f"fields name,first_release_date; "
+            f"limit {TOP_N_GAME_SEARCH};"
+        )
+        results = self._query("games", body)
+        out = []
+        for r in results:
+            year = None
+            ts = r.get("first_release_date")
+            if ts:
+                year = datetime.fromtimestamp(ts, tz=timezone.utc).year
+            out.append(GameCandidate(id=r["id"], name=r["name"], year=year))
+        return out
+
+    # ── Metadatos completos ──────────────────────────────────────────────
+
+    def get_metadata(self, game_id: int) -> GameMetadata:
+        body = (
+            "fields name, genres.name, "
+            "involved_companies.company.name, involved_companies.developer, involved_companies.publisher, "
+            "release_dates.date, release_dates.region, release_dates.platform, "
+            "franchises.name, collection.name; "
+            f"where id = {game_id};"
+        )
+        results = self._query("games", body)
+        if not results:
+            return GameMetadata()
+
+        game = results[0]
+        meta = GameMetadata()
+
+        # Géneros
+        meta.genres = [g["name"] for g in game.get("genres", []) if "name" in g]
+
+        # Desarrollador / distribuidor a partir de involved_companies
+        devs, pubs = [], []
+        for ic in game.get("involved_companies", []):
+            company_name = (ic.get("company") or {}).get("name")
+            if not company_name:
+                continue
+            if ic.get("developer"):
+                devs.append(company_name)
+            if ic.get("publisher"):
+                pubs.append(company_name)
+        meta.developer = ", ".join(dict.fromkeys(devs))  # dict.fromkeys: quita duplicados preservando orden
+        meta.publisher = ", ".join(dict.fromkeys(pubs))
+
+        # Franquicia/saga: franchises tiene prioridad, si no hay se usa collection
+        franchises = [f["name"] for f in game.get("franchises", []) if "name" in f]
+        if franchises:
+            meta.family = franchises[0]
+        elif game.get("collection", {}).get("name"):
+            meta.family = game["collection"]["name"]
+
+        # Fecha de lanzamiento por región, con la prioridad EU > NA > JP > mundial
+        meta.release_date, meta.release_region = self._pick_release_date(game.get("release_dates", []))
+
+        return meta
+
+    # ── Helpers internos ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _pick_release_date(release_dates: list[dict]) -> tuple[str, str]:
+        """Elige la fecha de lanzamiento en PC según la prioridad de región
+        configurada (IGDB_REGION_PRIORITY). Si no hay ninguna en PC/región
+        preferida, cae a la fecha más antigua disponible como último recurso.
+        """
+        pc_dates = [d for d in release_dates if d.get("platform") in IGDB_PC_PLATFORM_IDS and d.get("date")]
+        candidates = pc_dates or [d for d in release_dates if d.get("date")]
+        if not candidates:
+            return "", ""
+
+        for region in IGDB_REGION_PRIORITY:
+            match = next((d for d in candidates if d.get("region") == region), None)
+            if match:
+                return _format_es_date(match["date"]), IGDB_REGION_NAMES.get(region, "")
+
+        # Ninguna región de la lista de prioridad: la fecha más antigua conocida.
+        earliest = min(candidates, key=lambda d: d["date"])
+        return _format_es_date(earliest["date"]), IGDB_REGION_NAMES.get(earliest.get("region"), "desconocida")
+
+
+def _format_es_date(unix_ts: int) -> str:
+    """Convierte un timestamp unix al formato de fecha de EmulationStation: YYYYMMDDT000000."""
+    dt = datetime.fromtimestamp(unix_ts, tz=timezone.utc)
+    return dt.strftime("%Y%m%dT000000")====
+=== src/components/__init__.py ===
+====
+=== src/components/interaction.py ===
+"""interaction.py — Contrato entre la lógica de negocio (worker.py) y la GUI.
+
+worker.py NUNCA importa tkinter: solo conoce este Protocol. Eso permite:
+  - testear worker.py con un stub/mock sin abrir ninguna ventana,
+  - cambiar de tkinter a otro toolkit el día de mañana tocando solo gui/.
+"""
+
+from __future__ import annotations
+
+from typing import Protocol
+
+from .models import GameCandidate, ImageCandidate
+
+
+class UserInteraction(Protocol):
+    def choose_game(self, query: str, candidates: list[GameCandidate]) -> int | None:
+        """Debe devolver el id elegido, o None si el usuario decide saltar el juego."""
+        ...
+
+    def choose_image(self, label: str, candidates: list[ImageCandidate]) -> ImageCandidate | None:
+        """Debe devolver el candidato elegido, o None si el usuario decide saltarlo."""
+        ...
+
+    def confirm_overwrite(self, filename: str) -> bool:
+        """Debe devolver True si hay que sobreescribir un archivo ya existente."""
+        ...
+
+    def log(self, message: str) -> None:
+        ...
+
+    def set_status(self, message: str) -> None:
+        ...
+====
+=== src/components/metadata_worker.py ===
+"""metadata_worker.py — Recorre roms/, resuelve cada juego en IGDB y vuelca
+sus metadatos textuales en gamelist.xml. Hermano de worker.py (que hace lo
+mismo para las imágenes de SteamGridDB): mismo patrón, misma interfaz de
+usuario (interaction.py), pero como no dependen la una de la otra puedes
+correr solo esta, solo la de imágenes, o las dos.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from .gamelist_io import parse_gamelist, update_gamelist_metadata
+from .igdb_client import IGDBAuthError, IGDBClient
+from .interaction import UserInteraction
+from .worker import ScraperCancelled  # reutilizamos la misma señal de cancelación
+
+
+@dataclass
+class MetadataScraperOptions:
+    roms: Path
+    client_id: str
+    client_secret: str
+    systems: list[str]
+    force: bool = False  # si True, sobreescribe tags de texto ya existentes
+
+
+class MetadataScraper:
+    def __init__(self, interaction: UserInteraction, is_cancelled=lambda: False):
+        self._ui = interaction
+        self._is_cancelled = is_cancelled
+
+    def run(self, options: MetadataScraperOptions) -> None:
+        if not options.roms.is_dir():
+            self._ui.log(f"✗ La ruta '{options.roms}' no existe o no es un directorio.")
+            return
+        if not options.client_id.strip() or not options.client_secret.strip():
+            self._ui.log("✗ Faltan Client ID / Client Secret de IGDB.")
+            return
+
+        client = IGDBClient(options.client_id, options.client_secret)
+
+        try:
+            client._ensure_token()  # falla rápido y claro si las credenciales están mal
+        except IGDBAuthError as e:
+            self._ui.log(f"✗ {e}")
+            return
+
+        for system in options.systems:
+            self._check_cancelled()
+            system_path = options.roms / system
+            gamelist = system_path / "gamelist.xml"
+
+            if not gamelist.exists():
+                self._ui.log(f"[{system}] ✗ No se encontró gamelist.xml, saltando.")
+                continue
+
+            games = parse_gamelist(gamelist)
+            self._ui.log(f"═══ Metadatos IGDB — Sistema: {system} ({len(games)} juegos) ═══")
+
+            for i, game in enumerate(games, 1):
+                self._check_cancelled()
+                self._ui.set_status(f"[IGDB][{system}] {i}/{len(games)}: {game.name}")
+                self._process_game(client, game.name, gamelist, options.force)
+
+        self._ui.set_status("Metadatos completados.")
+        self._ui.log("✓ Metadatos completados.")
+
+    def _check_cancelled(self) -> None:
+        if self._is_cancelled():
+            self._ui.log("— Proceso cancelado por el usuario.")
+            raise ScraperCancelled()
+
+    def _process_game(self, client: IGDBClient, name: str, gamelist_path: Path, force: bool) -> None:
+        self._ui.log(f"▸ {name}: buscando en IGDB…")
+        results = client.search_games(name)
+        if not results:
+            self._ui.log(f"  ✗ Sin resultados en IGDB para '{name}'")
+            return
+
+        game_id = results[0].id
+        if len(results) > 1:
+            exact = [r for r in results if r.name.lower() == name.lower()]
+            if len(exact) == 1:
+                game_id = exact[0].id
+            else:
+                chosen = self._ui.choose_game(name, results)
+                if chosen is None:
+                    self._ui.log(f"  — '{name}' saltado.")
+                    return
+                game_id = chosen
+
+        metadata = client.get_metadata(game_id)
+        if not metadata.has_data():
+            self._ui.log(f"  ✗ IGDB no devolvió metadatos usables para '{name}'")
+            return
+
+        written = update_gamelist_metadata(gamelist_path, name, metadata, force=force)
+        if written:
+            region_note = f" (fecha: región {metadata.release_region})" if "releasedate" in written else ""
+            self._ui.log(f"  ✓ Actualizado: {', '.join(written)}{region_note}")
+        else:
+            self._ui.log("  — Sin cambios (los campos ya tenían datos; activa 'forzar' para sobreescribir).")====
+=== src/components/models.py ===
+"""models.py — Estructuras de datos simples compartidas por todo el paquete.
+
+Usar dataclasses en vez de pasar objetos del wrapper `steamgrid` o tuplas
+sueltas por toda la aplicación hace que la GUI y la lógica de red no estén
+acopladas a la librería externa: si el día de mañana cambia el wrapper de
+SteamGridDB, solo hay que tocar sgdb_client.py.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+@dataclass
+class GameEntry:
+    """Una entrada del gamelist.xml a procesar."""
+    name: str
+    file_stem: str  # stem del fichero launcher; define el prefijo de las imágenes en disco
+
+
+@dataclass
+class GameCandidate:
+    """Un resultado de búsqueda de juego en SteamGridDB."""
+    id: int
+    name: str
+    year: int | None = None
+
+
+@dataclass
+class ImageCandidate:
+    """Un asset (grid/logo/hero) candidato en SteamGridDB."""
+    url: str
+    thumb_url: str
+    width: int
+    height: int
+    author: str
+    upvotes: int = 0
+    downvotes: int = 0
+    mime: str = ""
+    preview: bytes | None = field(default=None, repr=False)  # bytes de la imagen para previsualizar en la GUI
+
+    @property
+    def score(self) -> int:
+        return self.upvotes - self.downvotes
+
+
+@dataclass
+class AssetJob:
+    """Un asset (thumb/marquee) pendiente de descargar para un juego concreto."""
+    key: str            # "thumb" | "marquee"
+    dest: Path
+
+
+@dataclass
+class GameMetadata:
+    """Metadatos textuales de un juego, listos para volcar a gamelist.xml.
+    Todos los campos son opcionales: si IGDB no trae el dato, se deja vacío
+    y ese tag del XML simplemente no se toca."""
+    developer: str = ""
+    publisher: str = ""
+    genres: list[str] = field(default_factory=list)
+    family: str = ""              # franquicia/saga
+    players: str = ""             # heurística aproximada, ver igdb_client.py
+    release_date: str = ""        # formato EmulationStation: YYYYMMDDT000000
+    release_region: str = ""      # "europe" | "north_america" | "japan" | ... (informativo, para el log)
+
+    def has_data(self) -> bool:
+        return any([self.developer, self.publisher, self.genres, self.family, self.players, self.release_date])====
+=== src/components/sgdb_client.py ===
+"""sgdb_client.py — Envoltorio sobre el paquete `steamgrid`.
+
+Toda la interacción con la librería externa vive aquí, y sale convertida a
+los dataclasses de models.py. El resto de la aplicación (worker, GUI) nunca
+importa `steamgrid` directamente, así que si esa librería cambia solo hay
+que tocar este fichero.
+"""
+
+from __future__ import annotations
+
+from steamgrid import Grid, SteamGridDB
+
+from .config import GRID_PREFERRED_DIMS
+from .models import GameCandidate, ImageCandidate
+
+
+class SGDBClient:
+    def __init__(self, api_key: str):
+        self._client = SteamGridDB(api_key)
+
+    # ── Búsqueda de juego ────────────────────────────────────────────────
+
+    def search_games(self, name: str) -> list[GameCandidate]:
+        try:
+            results = self._client.search_game(name)
+        except Exception:
+            return []
+        if not results:
+            return []
+        out = []
+        for r in results:
+            year = r.release_date.year if getattr(r, "release_date", None) else None
+            out.append(GameCandidate(id=r.id, name=r.name, year=year))
+        return out
+
+    # ── Obtención de assets ──────────────────────────────────────────────
+
+    def get_assets(self, game_id: int, fetch_type: str, limit: int) -> list[ImageCandidate]:
+        """
+        Devuelve hasta `limit` assets PNG estáticos para game_id.
+
+        Para grids:
+          1. Pide solo 600×900 (GRID_PREFERRED_DIMS) a la API.
+          2. Si no hay resultados, cualquier dimensión filtrando ratio 2:3.
+          3. Si tampoco hay ratio 2:3, cualquier PNG estático.
+
+        Para logos/heroes: descarga todo y filtra PNG estáticos manualmente
+        (el wrapper tiene un bug de espacio final en ImageType.Static).
+        """
+        try:
+            if fetch_type == "grids":
+                items = self._fetch_raw_grids(game_id, {"dimensions": GRID_PREFERRED_DIMS})
+                items = [a for a in items if self._is_static_png(a)]
+
+                if not items:
+                    all_items = self._fetch_raw_grids(game_id, {})
+                    png_items = [a for a in all_items if self._is_static_png(a)]
+                    items = [a for a in png_items if self._is_2_3_ratio(a)]
+                    if not items:
+                        items = png_items  # fallback final: cualquier PNG
+
+            elif fetch_type == "logos":
+                raw = self._client.get_logos_by_gameid([game_id])
+                items = [a for a in (raw or []) if self._is_static_png(a)]
+
+            elif fetch_type == "heroes":
+                raw = self._client.get_heroes_by_gameid([game_id])
+                items = [a for a in (raw or []) if self._is_static_png(a)]
+
+            else:
+                return []
+
+            candidates = [self._to_candidate(a) for a in items[:limit]]
+            return sorted(candidates, key=lambda c: c.score, reverse=True)
+
+        except Exception:
+            return []
+
+    # ── Helpers internos ─────────────────────────────────────────────────
+
+    def _fetch_raw_grids(self, game_id: int, extra_queries: dict) -> list:
+        """
+        Llama directamente a _http.get_grid() para poder inyectar parámetros
+        extra (como dimensions=600x900) que la API pública del wrapper no
+        expone.
+        """
+        try:
+            payloads = self._client._http.get_grid(
+                [game_id], "game",
+                queries={"nsfw": "false", "humor": "false", **extra_queries},
+            )
+            if payloads:
+                return [Grid(p, self._client._http) for p in payloads]
+        except Exception:
+            pass
+        return []
+
+    @staticmethod
+    def _is_static_png(asset) -> bool:
+        """Descarta WebP y GIF; acepta PNG o mime vacío (la URL manda)."""
+        mime = (getattr(asset, "mime", "") or "").lower()
+        url = (getattr(asset, "url", "") or "").lower()
+        if mime and "png" not in mime:
+            return False
+        if url.endswith((".webp", ".gif")):
+            return False
+        return True
+
+    @staticmethod
+    def _is_2_3_ratio(asset) -> bool:
+        w = getattr(asset, "width", 0) or 0
+        h = getattr(asset, "height", 0) or 0
+        if not w or not h:
+            return False
+        return abs((w / h) - (2 / 3)) < 0.05
+
+    @staticmethod
+    def _to_candidate(asset) -> ImageCandidate:
+        author = asset.author.name if getattr(asset, "author", None) else "?"
+        return ImageCandidate(
+            url=asset.url,
+            # SGDB ya sirve una miniatura pequeña ("thumb"); si no viene, se
+            # cae a la url completa (peor caso, pero sigue funcionando).
+            thumb_url=getattr(asset, "thumbnail", None) or asset.url,
+            width=asset.width or 0,
+            height=asset.height or 0,
+            author=author,
+            upvotes=getattr(asset, "upvotes", 0) or 0,
+            downvotes=getattr(asset, "downvotes", 0) or 0,
+            mime=getattr(asset, "mime", "") or "",
+        )
+====
+=== src/components/worker.py ===
+"""worker.py — Orquesta todo el proceso: recorre sistemas, resuelve juegos en
+SteamGridDB, decide qué asset descargar (auto o vía `interaction`) y actualiza
+gamelist.xml.
+
+Pensado para ejecutarse en un hilo de fondo; toda comunicación con el usuario
+pasa por la interfaz `UserInteraction` (ver interaction.py), nunca por
+tkinter directamente.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from .clean import clean_name
+from .config import ASSET_DEFS, TOP_N_AUTO, TOP_N_INTERACTIVE
+from .downloader import download_many_bytes, download_to_file
+from .gamelist_io import parse_gamelist, update_gamelist
+from .interaction import UserInteraction
+from .models import GameCandidate, ImageCandidate
+from .sgdb_client import SGDBClient
+
+
+@dataclass
+class ScraperOptions:
+    roms: Path
+    apikey: str
+    systems: list[str]
+    force: bool = False
+    interactive: bool = False  # si True, el usuario elige la imagen entre varios candidatos
+
+
+class ScraperCancelled(Exception):
+    """Señal interna para abortar limpiamente si el usuario cancela desde la GUI."""
+
+
+class Scraper:
+    def __init__(self, interaction: UserInteraction, is_cancelled=lambda: False):
+        self._ui = interaction
+        self._is_cancelled = is_cancelled
+
+    def run(self, options: ScraperOptions) -> None:
+        if not options.roms.is_dir():
+            self._ui.log(f"✗ La ruta '{options.roms}' no existe o no es un directorio.")
+            return
+        if not options.apikey.strip():
+            self._ui.log("✗ API key vacía.")
+            return
+
+        client = SGDBClient(options.apikey)
+
+        for system in options.systems:
+            self._check_cancelled()
+            system_path = options.roms / system
+            gamelist = system_path / "gamelist.xml"
+
+            if not gamelist.exists():
+                self._ui.log(f"[{system}] ✗ No se encontró gamelist.xml, saltando.")
+                continue
+
+            games = parse_gamelist(gamelist)
+            images_dir = system_path / "images"
+
+            self._ui.log(f"═══ Sistema: {system} ({len(games)} juegos) ═══")
+
+            for i, game in enumerate(games, 1):
+                self._check_cancelled()
+                self._ui.set_status(f"[{system}] {i}/{len(games)}: {game.name}")
+                self._process_game(
+                    client=client,
+                    name=game.name,
+                    file_stem=game.file_stem,
+                    images_dir=images_dir,
+                    gamelist_path=gamelist,
+                    force=options.force,
+                    interactive=options.interactive,
+                )
+
+        self._ui.set_status("Proceso completado.")
+        self._ui.log("✓ Proceso completado.")
+
+    def _check_cancelled(self) -> None:
+        if self._is_cancelled():
+            self._ui.log("— Proceso cancelado por el usuario.")
+            raise ScraperCancelled()
+
+    # ── Un juego ─────────────────────────────────────────────────────────
+
+    def _process_game(
+        self,
+        client: SGDBClient,
+        name: str,
+        file_stem: str,
+        images_dir: Path,
+        gamelist_path: Path,
+        force: bool,
+        interactive: bool,
+    ) -> None:
+        to_download: dict[str, Path] = {}
+        for key, adef in ASSET_DEFS.items():
+            dest = images_dir / (file_stem + adef["suffix"])
+            if dest.exists() and not force:
+                if not self._ui.confirm_overwrite(dest.name):
+                    continue
+            to_download[key] = dest
+
+        if not to_download:
+            self._ui.log(f"✓ Sin cambios para '{name}'")
+            return
+
+        self._ui.log(f"▸ {name}: buscando en SteamGridDB…")
+        game_id = self._resolve_game_id(client, name)
+        if not game_id:
+            self._ui.log(f"✗ No se pudo resolver '{name}', saltando.")
+            return
+
+        downloaded: dict[str, bool] = {}
+        for key, dest in to_download.items():
+            self._check_cancelled()
+            adef = ASSET_DEFS[key]
+            limit = TOP_N_INTERACTIVE if interactive else TOP_N_AUTO
+            candidates = client.get_assets(game_id, adef["fetch"], limit)
+
+            if not candidates:
+                self._ui.log(f"  ✗ Sin assets '{key}' disponibles para '{name}'")
+                downloaded[key] = False
+                continue
+
+            chosen = self._pick_image(candidates, adef["label"], interactive)
+            if chosen is None:
+                self._ui.log(f"  — '{key}' saltado.")
+                downloaded[key] = False
+                continue
+
+            ok = download_to_file(chosen.url, dest)
+            downloaded[key] = ok
+            self._ui.log(f"  {'✓' if ok else '✗'} {dest.name}")
+
+        if update_gamelist(gamelist_path, name, file_stem, downloaded):
+            self._ui.log("  ✓ gamelist.xml actualizado")
+
+    # ── Resolución del juego (búsqueda + desambiguación) ────────────────
+
+    def _resolve_game_id(self, client: SGDBClient, name: str) -> int | None:
+        results = client.search_games(name)
+        if not results:
+            self._ui.log(f"  ✗ Sin resultados en SGDB para '{name}'")
+            return None
+
+        if len(results) == 1:
+            return results[0].id
+
+        exact = [r for r in results if r.name.lower() == name.lower()]
+        if len(exact) == 1:
+            return exact[0].id
+
+        chosen_id = self._ui.choose_game(name, results)
+        return chosen_id
+
+    # ── Selección de imagen (auto o manual) ─────────────────────────────
+
+    def _pick_image(
+        self,
+        candidates: list[ImageCandidate],
+        label: str,
+        interactive: bool,
+    ) -> ImageCandidate | None:
+        if interactive:
+            # Previsualizaciones en paralelo y usando el thumb pequeño que ya
+            # sirve SGDB (no la imagen a resolución completa) — mucho más
+            # rápido, y sigue en el hilo de trabajo, no en el de la GUI.
+            self._check_cancelled()
+            previews = download_many_bytes([c.thumb_url for c in candidates])
+            for c, preview in zip(candidates, previews):
+                c.preview = preview
+            return self._ui.choose_image(label, candidates)
+
+        # Modo automático: mejor score neto entre los TOP_N_AUTO primeros
+        # (get_assets ya devuelve la lista ordenada por score descendente).
+        best = candidates[0]
+        self._ui.log(f"  → {label}: score={best.score:+d} {best.width}×{best.height} ({best.author})")
+        return best
+====
+=== src/components/gui/bridge.py ===
+"""bridge.py — Implementación de UserInteraction basada en tkinter.
+
+tkinter solo puede crear/tocar widgets desde el hilo principal, pero el
+scraping ocurre en un hilo de fondo (para no congelar la ventana). Este
+puente resuelve el cruce: cada método que necesita abrir un diálogo
+programa su ejecución en el hilo principal con `root.after(0, ...)` y
+espera el resultado en una `queue.Queue`, bloqueando solo el hilo de
+fondo (el hilo de tkinter sigue respondiendo con normalidad).
+"""
+
+from __future__ import annotations
+
+import queue
+import tkinter as tk
+from tkinter import messagebox
+from typing import Callable
+
+from ..models import GameCandidate, ImageCandidate
+from .game_picker import GamePickerDialog
+from .image_picker import ImagePickerDialog
+
+
+class TkBridge:
+    def __init__(self, root: tk.Tk, log_fn: Callable[[str], None], status_fn: Callable[[str], None]):
+        self._root = root
+        self._log_fn = log_fn
+        self._status_fn = status_fn
+
+    # ── UserInteraction ──────────────────────────────────────────────────
+
+    def choose_game(self, query: str, candidates: list[GameCandidate]) -> int | None:
+        return self._run_on_main(lambda: GamePickerDialog(self._root, query, candidates).show())
+
+    def choose_image(self, label: str, candidates: list[ImageCandidate]) -> ImageCandidate | None:
+        return self._run_on_main(lambda: ImagePickerDialog(self._root, label, candidates).show())
+
+    def confirm_overwrite(self, filename: str) -> bool:
+        return self._run_on_main(
+            lambda: messagebox.askyesno("Archivo existente", f"Ya existe «{filename}». ¿Sobreescribir?")
+        )
+
+    def log(self, message: str) -> None:
+        self._root.after(0, self._log_fn, message)
+
+    def set_status(self, message: str) -> None:
+        self._root.after(0, self._status_fn, message)
+
+    # ── Interno ──────────────────────────────────────────────────────────
+
+    def _run_on_main(self, factory: Callable[[], object]):
+        """Ejecuta `factory` en el hilo principal y devuelve su resultado,
+        bloqueando el hilo llamante (de fondo) hasta que esté disponible."""
+        result_q: queue.Queue = queue.Queue(maxsize=1)
+
+        def task():
+            try:
+                result_q.put(factory())
+            except Exception:
+                result_q.put(None)
+
+        self._root.after(0, task)
+        return result_q.get()
+====
+=== src/components/gui/folder_picker.py ===
+"""folder_picker.py — Diálogo nativo para elegir la carpeta roms/."""
+
+from __future__ import annotations
+
+import tkinter as tk
+from pathlib import Path
+from tkinter import filedialog
+
+
+def ask_roms_folder(parent: tk.Misc, initial: str | None = None) -> Path | None:
+    chosen = filedialog.askdirectory(
+        parent=parent,
+        title="Selecciona la carpeta roms/",
+        initialdir=initial or str(Path.home()),
+        mustexist=True,
+    )
+    return Path(chosen) if chosen else None
+====
+=== src/components/gui/game_picker.py ===
+"""game_picker.py — Diálogo modal para desambiguar resultados de búsqueda de juego."""
+
+from __future__ import annotations
+
+import tkinter as tk
+from tkinter import ttk
+
+from ..models import GameCandidate
+
+
+class GamePickerDialog(tk.Toplevel):
+    def __init__(self, parent: tk.Misc, query: str, candidates: list[GameCandidate]):
+        super().__init__(parent)
+        self.title(f"Elegir juego — {query}")
+        self.geometry("520x420")
+        self.transient(parent)
+        self.grab_set()
+        self.resizable(True, True)
+
+        self._result: int | None = None
+        self._candidates = candidates
+
+        ttk.Label(
+            self, text=f"Varios resultados para «{query}». Elige el correcto:",
+            wraplength=480, padding=(10, 10),
+        ).pack(fill="x")
+
+        list_frame = ttk.Frame(self, padding=(10, 0))
+        list_frame.pack(fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical")
+        self._listbox = tk.Listbox(
+            list_frame, yscrollcommand=scrollbar.set, activestyle="dotbox", font=("TkDefaultFont", 10),
+        )
+        scrollbar.config(command=self._listbox.yview)
+        self._listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        for c in candidates:
+            year = c.year if c.year else "?"
+            self._listbox.insert("end", f"{c.name}   ({year})   [id={c.id}]")
+        if candidates:
+            self._listbox.selection_set(0)
+        self._listbox.bind("<Double-Button-1>", lambda _e: self._on_choose())
+
+        btns = ttk.Frame(self, padding=10)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Saltar este juego", command=self._on_skip).pack(side="left")
+        ttk.Button(btns, text="Elegir", command=self._on_choose).pack(side="right")
+
+        self.protocol("WM_DELETE_WINDOW", self._on_skip)
+
+    def _on_choose(self) -> None:
+        sel = self._listbox.curselection()
+        if sel:
+            self._result = self._candidates[sel[0]].id
+        self.destroy()
+
+    def _on_skip(self) -> None:
+        self._result = None
+        self.destroy()
+
+    def show(self) -> int | None:
+        self.wait_window(self)
+        return self._result
+====
+=== src/components/gui/image_picker.py ===
+"""image_picker.py — Galería de miniaturas para elegir un asset (al estilo
+Playnite: varias portadas/logos en una cuadrícula, se hace click en la que
+se quiere usar).
+"""
+
+from __future__ import annotations
+
+import io
+import tkinter as tk
+from tkinter import ttk
+
+from PIL import Image, ImageTk
+
+from ..models import ImageCandidate
+
+THUMB_MAX_SIZE = (180, 240)  # tamaño máximo de la miniatura dentro de la celda
+COLUMNS = 4
+
+
+class ImagePickerDialog(tk.Toplevel):
+    def __init__(self, parent: tk.Misc, label: str, candidates: list[ImageCandidate]):
+        super().__init__(parent)
+        self.withdraw()  # oculto hasta que la galería esté montada, evita el "flash" de ventana vacía
+        self.title(f"Elegir imagen — {label}")
+        self.geometry("820x620")
+        self.transient(parent)
+        self.resizable(True, True)
+
+        self._result: ImageCandidate | None = None
+        self._photo_refs: list[ImageTk.PhotoImage] = []  # evita que el GC borre las imágenes
+
+        ttk.Label(self, text=label, font=("TkDefaultFont", 11, "bold"), padding=(10, 10)).pack(fill="x")
+
+        canvas = tk.Canvas(self, highlightthickness=0)
+        vbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vbar.set)
+        canvas.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(0, 10))
+        vbar.pack(side="right", fill="y")
+
+        grid = ttk.Frame(canvas)
+        grid_window = canvas.create_window((0, 0), window=grid, anchor="nw")
+
+        def _on_grid_configure(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _on_canvas_resize(event):
+            canvas.itemconfig(grid_window, width=event.width)
+
+        grid.bind("<Configure>", _on_grid_configure)
+        canvas.bind("<Configure>", _on_canvas_resize)
+
+        self._build_gallery(grid, candidates)
+
+        btns = ttk.Frame(self, padding=10)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Saltar este asset", command=self._on_skip).pack(side="left")
+
+        self.protocol("WM_DELETE_WINDOW", self._on_skip)
+
+        self.deiconify()  # ya está todo montado: ahora sí se muestra
+        self.grab_set()
+        self.lift()
+
+    def _build_gallery(self, grid: ttk.Frame, candidates: list[ImageCandidate]) -> None:
+        for i, cand in enumerate(candidates):
+            row, col = divmod(i, COLUMNS)
+            cell = ttk.Frame(grid, padding=8, relief="groove", borderwidth=1)
+            cell.grid(row=row, column=col, sticky="nsew", padx=4, pady=4)
+
+            photo = self._load_thumbnail(cand.preview)
+            if photo is not None:
+                self._photo_refs.append(photo)
+                img_label = tk.Label(cell, image=photo, cursor="hand2")
+            else:
+                img_label = tk.Label(cell, text="(sin previsualización)", width=22, height=10, cursor="hand2")
+            img_label.pack()
+
+            info = f"score {cand.score:+d}  ·  {cand.width}×{cand.height}\n{cand.author}"
+            ttk.Label(cell, text=info, justify="center", font=("TkDefaultFont", 8)).pack(pady=(4, 0))
+
+            def _choose(_event=None, c=cand):
+                self._on_choose(c)
+
+            img_label.bind("<Button-1>", _choose)
+            cell.bind("<Button-1>", _choose)
+
+        for col in range(COLUMNS):
+            grid.columnconfigure(col, weight=1)
+
+    @staticmethod
+    def _load_thumbnail(raw: bytes | None) -> ImageTk.PhotoImage | None:
+        if not raw:
+            return None
+        try:
+            img = Image.open(io.BytesIO(raw))
+            img.thumbnail(THUMB_MAX_SIZE)
+            return ImageTk.PhotoImage(img)
+        except Exception:
+            return None
+
+    def _on_choose(self, candidate: ImageCandidate) -> None:
+        self._result = candidate
+        self.destroy()
+
+    def _on_skip(self) -> None:
+        self._result = None
+        self.destroy()
+
+    def show(self) -> ImageCandidate | None:
+        self.wait_window(self)
+        return self._result
+====
+=== src/components/gui/__init__.py ===
+====
+=== src/components/gui/main_window.py ===
+"""main_window.py — Ventana principal: formulario de opciones + registro de actividad.
+
+Lanza el scraping en un hilo de fondo (worker.Scraper) para que la ventana
+nunca se congele, incluso mientras se descargan imágenes o se espera a que
+el usuario elija algo en un diálogo modal.
+"""
+
+from __future__ import annotations
+
+import threading
+import tkinter as tk
+from pathlib import Path
+from tkinter import messagebox, ttk
+
+from ..config import SUPPORTED_SYSTEMS
+from ..worker import ScraperCancelled, ScraperOptions, Scraper
+from .bridge import TkBridge
+from .folder_picker import ask_roms_folder
+
+
+class MainWindow(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("SteamGridDB Artwork Downloader")
+        self.geometry("720x560")
+        self.minsize(600, 480)
+
+        self._roms_var = tk.StringVar()
+        self._apikey_var = tk.StringVar()
+        self._force_var = tk.BooleanVar(value=False)
+        self._interactive_var = tk.BooleanVar(value=True)
+        self._system_vars = {s: tk.BooleanVar(value=True) for s in SUPPORTED_SYSTEMS}
+
+        self._worker_thread: threading.Thread | None = None
+        self._cancel_requested = False
+
+        self._build_ui()
+
+    # ── Construcción de la UI ────────────────────────────────────────────
+
+    def _build_ui(self) -> None:
+        form = ttk.Frame(self, padding=12)
+        form.pack(fill="x")
+
+        # Carpeta roms/
+        ttk.Label(form, text="Carpeta roms/:").grid(row=0, column=0, sticky="w")
+        ttk.Entry(form, textvariable=self._roms_var).grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(form, text="Examinar…", command=self._on_browse).grid(row=0, column=2)
+
+        # API key
+        ttk.Label(form, text="API key SteamGridDB:").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(form, textvariable=self._apikey_var, show="•").grid(
+            row=1, column=1, columnspan=2, sticky="ew", padx=6, pady=(8, 0)
+        )
+
+        form.columnconfigure(1, weight=1)
+
+        # Sistemas
+        systems_frame = ttk.LabelFrame(self, text="Sistemas a procesar", padding=10)
+        systems_frame.pack(fill="x", padx=12, pady=(4, 0))
+        for s in SUPPORTED_SYSTEMS:
+            ttk.Checkbutton(systems_frame, text=s, variable=self._system_vars[s]).pack(side="left", padx=6)
+
+        # Opciones
+        opts_frame = ttk.LabelFrame(self, text="Opciones", padding=10)
+        opts_frame.pack(fill="x", padx=12, pady=8)
+        ttk.Checkbutton(
+            opts_frame, text="Forzar sobreescritura de archivos existentes", variable=self._force_var
+        ).pack(anchor="w")
+        ttk.Checkbutton(
+            opts_frame,
+            text="Elegir imágenes manualmente (galería estilo Playnite). Si no, se coge automáticamente la mejor.",
+            variable=self._interactive_var,
+        ).pack(anchor="w")
+
+        # Botones de acción
+        actions = ttk.Frame(self, padding=(12, 0))
+        actions.pack(fill="x")
+        self._start_btn = ttk.Button(actions, text="Iniciar", command=self._on_start)
+        self._start_btn.pack(side="left")
+        self._cancel_btn = ttk.Button(actions, text="Cancelar", command=self._on_cancel, state="disabled")
+        self._cancel_btn.pack(side="left", padx=6)
+
+        # Estado + log
+        self._status_var = tk.StringVar(value="Listo.")
+        ttk.Label(self, textvariable=self._status_var, padding=(12, 6)).pack(fill="x")
+
+        log_frame = ttk.Frame(self, padding=(12, 0, 12, 12))
+        log_frame.pack(fill="both", expand=True)
+        log_scroll = ttk.Scrollbar(log_frame, orient="vertical")
+        self._log_text = tk.Text(
+            log_frame, height=16, yscrollcommand=log_scroll.set, state="disabled", wrap="word"
+        )
+        log_scroll.config(command=self._log_text.yview)
+        self._log_text.pack(side="left", fill="both", expand=True)
+        log_scroll.pack(side="right", fill="y")
+
+        self._bridge = TkBridge(self, log_fn=self._append_log, status_fn=self._set_status)
+
+    # ── Acciones ─────────────────────────────────────────────────────────
+
+    def _on_browse(self) -> None:
+        folder = ask_roms_folder(self, initial=self._roms_var.get() or None)
+        if folder:
+            self._roms_var.set(str(folder))
+
+    def _on_start(self) -> None:
+        roms = self._roms_var.get().strip()
+        apikey = self._apikey_var.get().strip()
+        systems = [s for s, v in self._system_vars.items() if v.get()]
+
+        if not roms:
+            messagebox.showwarning("Falta la carpeta roms/", "Selecciona primero la carpeta roms/.")
+            return
+        if not apikey:
+            messagebox.showwarning("Falta la API key", "Introduce tu API key de SteamGridDB.")
+            return
+        if not systems:
+            messagebox.showwarning("Sin sistemas", "Selecciona al menos un sistema a procesar.")
+            return
+
+        options = ScraperOptions(
+            roms=Path(roms),
+            apikey=apikey,
+            systems=systems,
+            force=self._force_var.get(),
+            interactive=self._interactive_var.get(),
+        )
+
+        self._cancel_requested = False
+        self._set_running(True)
+        self._clear_log()
+
+        self._worker_thread = threading.Thread(target=self._run_scraper, args=(options,), daemon=True)
+        self._worker_thread.start()
+
+    def _on_cancel(self) -> None:
+        self._cancel_requested = True
+        self._set_status("Cancelando… (se detendrá tras el juego en curso)")
+
+    def _run_scraper(self, options: ScraperOptions) -> None:
+        scraper = Scraper(self._bridge, is_cancelled=lambda: self._cancel_requested)
+        try:
+            scraper.run(options)
+        except ScraperCancelled:
+            pass
+        except Exception as e:
+            self._bridge.log(f"✗ Error inesperado: {e}")
+        finally:
+            self.after(0, self._set_running, False)
+
+    # ── Helpers de UI (siempre llamados en el hilo principal) ───────────
+
+    def _set_running(self, running: bool) -> None:
+        self._start_btn.config(state="disabled" if running else "normal")
+        self._cancel_btn.config(state="normal" if running else "disabled")
+
+    def _append_log(self, message: str) -> None:
+        self._log_text.config(state="normal")
+        self._log_text.insert("end", message + "\n")
+        self._log_text.see("end")
+        self._log_text.config(state="disabled")
+
+    def _clear_log(self) -> None:
+        self._log_text.config(state="normal")
+        self._log_text.delete("1.0", "end")
+        self._log_text.config(state="disabled")
+
+    def _set_status(self, message: str) -> None:
+        self._status_var.set(message)
+
+
+def main() -> None:
+    app = MainWindow()
+    app.mainloop()
+====
