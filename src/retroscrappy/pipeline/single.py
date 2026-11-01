@@ -43,6 +43,23 @@ def edit_entry(system: SystemDir, rel_path: str, change: Callable[[GameEntry], T
     return result
 
 
+def set_hidden(system: SystemDir, rel_paths: set[str], hidden: bool) -> int:
+    """Hide or show several ROMs in EmulationStation. Returns how many changed."""
+    gamelist = Gamelist.for_system(system.path)
+    changed = 0
+    for rel_path in sorted(rel_paths):
+        entry = gamelist.find(rel_path) or gamelist.add(
+            rel_path, title_from_filename(Path(rel_path).stem)
+        )
+        if entry.hidden != hidden:
+            entry.hidden = hidden
+            changed += 1
+    if changed:
+        gamelist.mark_dirty()
+        gamelist.save()
+    return changed
+
+
 class ItemFetcher:
     """Fetches individual items for one game from a chosen provider."""
 

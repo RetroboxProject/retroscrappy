@@ -13,9 +13,10 @@ from PySide6.QtCore import (
     QSortFilterProxyModel,
     Qt,
 )
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtWidgets import QApplication, QStyle, QWidget
 
+from retroscrappy.core.gamelist import HIDDEN_TAG
 from retroscrappy.core.items import Field, MediaKind
 from retroscrappy.core.library import SystemDir, find_roms, resolve_media_path
 from retroscrappy.core.names import title_from_filename
@@ -47,6 +48,11 @@ class GameRow:
         if isinstance(item, MediaKind):
             return item in self.media
         return bool(self.tags.get(item.value))
+
+    @property
+    def hidden(self) -> bool:
+        """Hidden in EmulationStation."""
+        return self.tags.get(HIDDEN_TAG, "").lower() == "true"
 
     @property
     def complete(self) -> bool:
@@ -133,12 +139,21 @@ class GamesModel(QAbstractTableModel):
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.UserRole):
             return row.name
         if role == Qt.ItemDataRole.ToolTipRole:
-            note = "" if row.in_gamelist else "\n" + self.tr("Not in gamelist.xml yet")
-            return row.rel_path + note
-        if role == Qt.ItemDataRole.FontRole and not row.in_gamelist:
+            notes = [row.rel_path]
+            if not row.in_gamelist:
+                notes.append(self.tr("Not in gamelist.xml yet"))
+            if row.hidden:
+                notes.append(self.tr("Hidden in EmulationStation"))
+            return "\n".join(notes)
+        if role == Qt.ItemDataRole.FontRole and (row.hidden or not row.in_gamelist):
             font = QFont()
-            font.setItalic(True)
+            font.setItalic(not row.in_gamelist)
+            font.setStrikeOut(row.hidden)
             return font
+        if role == Qt.ItemDataRole.ForegroundRole and row.hidden:
+            return QBrush(QColor(128, 128, 128))
+        if role == Qt.ItemDataRole.DecorationRole and row.hidden:
+            return QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogNoButton)
         return None
 
 
@@ -165,5 +180,6 @@ class GamesFilter(QSortFilterProxyModel):
             return False
         model = self.sourceModel()
         if self._incomplete_only and isinstance(model, GamesModel):
-            return not model.row_at(source_row).complete
+            row = model.row_at(source_row)
+            return not row.complete and not row.hidden
         return True

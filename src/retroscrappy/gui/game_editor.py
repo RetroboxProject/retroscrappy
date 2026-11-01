@@ -17,6 +17,7 @@ from typing import Any
 from PySide6.QtCore import QSize, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QCursor, QDesktopServices, QFont
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -42,7 +43,7 @@ from retroscrappy.gui.labels import field_label, item_label
 from retroscrappy.gui.library_view import GameRow
 from retroscrappy.gui.widgets import MediaSlot
 from retroscrappy.pipeline.media import import_media_file, remove_media
-from retroscrappy.pipeline.single import NO_PREVIEW, ItemFetcher, edit_entry
+from retroscrappy.pipeline.single import NO_PREVIEW, ItemFetcher, edit_entry, set_hidden
 from retroscrappy.providers.base import GameQuery, MediaCandidate
 from retroscrappy.providers.registry import PROVIDER_LABELS, available_providers_for
 
@@ -271,6 +272,11 @@ class GameEditor(QScrollArea):
         self._path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._status = QLabel()
         self._status.setWordWrap(True)
+        self._hidden = QCheckBox(self.tr("Hidden in EmulationStation"))
+        self._hidden.setToolTip(
+            self.tr("Keeps the entry in gamelist.xml but hides it from the game list.")
+        )
+        self._hidden.toggled.connect(self._set_hidden)
         self._slots = {
             kind: MediaSlot(item_label(kind), size, preview=kind not in NO_PREVIEW)
             for kind, size in _SLOT_SIZES.items()
@@ -294,6 +300,7 @@ class GameEditor(QScrollArea):
         body = QWidget()
         column_layout = QVBoxLayout(body)
         column_layout.addWidget(self._path)
+        column_layout.addWidget(self._hidden)
         column_layout.addLayout(grid)
         column_layout.addWidget(self._status)
         column_layout.addWidget(self._text)
@@ -317,6 +324,9 @@ class GameEditor(QScrollArea):
         self._target = (system, row) if system and row else None
         self.widget().setEnabled(self._target is not None)
         self._path.setText(row.rel_path if row else self.tr("Select a game"))
+        self._hidden.blockSignals(True)
+        self._hidden.setChecked(bool(row and row.hidden))
+        self._hidden.blockSignals(False)
         media = row.media if row else {}
         for kind, slot in self._slots.items():
             slot.show_file(media.get(kind))
@@ -423,6 +433,21 @@ class GameEditor(QScrollArea):
     def _revert_text(self) -> None:
         if self._target is not None:
             self._text.load(self._target[1].tags, self._target[1].name)
+
+    @Slot(bool)
+    def _set_hidden(self, hidden: bool) -> None:
+        if self._target is None:
+            return
+        system, row = self._target
+        try:
+            set_hidden(system, {row.rel_path}, hidden)
+        except OSError as exc:
+            self._status.setText(f"⚠ {exc}")
+            return
+        self._status.setText(
+            self.tr("Hidden in EmulationStation.") if hidden else self.tr("Visible again.")
+        )
+        self.changed.emit(row.rel_path)
 
     # ── Media ────────────────────────────────────────────────────────────
 

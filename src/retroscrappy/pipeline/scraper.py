@@ -122,7 +122,12 @@ class Scraper:
                 _log.info("[%s] Added %d ROMs missing from gamelist.xml", system.folder, len(added))
 
         wanted = request.only.get(system.folder) if request.only else None
-        entries = [e for e in gamelist.games if e.path and (wanted is None or e.path in wanted)]
+        # Hidden games are skipped unless the user picked them explicitly.
+        entries = [
+            e
+            for e in gamelist.games
+            if e.path and (e.path in wanted if wanted is not None else not e.hidden)
+        ]
         _log.info("[%s] %s: %d games", system.folder, system.label, len(entries))
         self._progress.system_started(system, len(entries))
 

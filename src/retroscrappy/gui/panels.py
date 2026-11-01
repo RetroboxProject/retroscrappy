@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from PySide6.QtCore import QItemSelectionModel, Qt, Signal, Slot
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -115,6 +117,7 @@ class GamesPanel(QWidget):
     """Games of the current system with a filter bar."""
 
     game_selected = Signal(object)  # GameRow | None
+    visibility_requested = Signal(object, bool)  # set of rel paths, hidden
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -134,6 +137,8 @@ class GamesPanel(QWidget):
         for column in range(1, self._model.columnCount()):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self._view.selectionModel().currentRowChanged.connect(self._emit_current)
+        self._view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._view.customContextMenuRequested.connect(self._context_menu)
 
         search = QLineEdit()
         search.setPlaceholderText(self.tr("Filter games…"))
@@ -155,8 +160,11 @@ class GamesPanel(QWidget):
     def set_rows(self, rows: list[GameRow], keep: str = "") -> None:
         """Show ``rows`` and select the one at ``keep`` (or the first visible one)."""
         self._model.set_rows(rows)
-        done = sum(1 for r in rows if r.complete)
-        self._count.setText(self.tr("{done}/{total} complete").format(done=done, total=len(rows)))
+        visible = [r for r in rows if not r.hidden]
+        done = sum(1 for r in visible if r.complete)
+        self._count.setText(
+            self.tr("{done}/{total} complete").format(done=done, total=len(visible))
+        )
         target = 0
         for proxy_row in range(self._filter.rowCount()):
             source = self._filter.mapToSource(self._filter.index(proxy_row, 0)).row()
@@ -180,6 +188,18 @@ class GamesPanel(QWidget):
             self._model.row_at(self._filter.mapToSource(index).row()).rel_path
             for index in self._view.selectionModel().selectedRows()
         }
+
+    @Slot()
+    def _context_menu(self) -> None:
+        paths = self.selected_rel_paths()
+        if not paths:
+            return
+        menu = QMenu(self)
+        hide = menu.addAction(self.tr("Hide in EmulationStation (%n)", "", len(paths)))
+        show = menu.addAction(self.tr("Show in EmulationStation (%n)", "", len(paths)))
+        hide.triggered.connect(lambda: self.visibility_requested.emit(paths, True))
+        show.triggered.connect(lambda: self.visibility_requested.emit(paths, False))
+        menu.exec(QCursor.pos())
 
     @Slot()
     def _emit_current(self) -> None:

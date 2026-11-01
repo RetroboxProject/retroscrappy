@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 GAMELIST_NAME = "gamelist.xml"
+HIDDEN_TAG = "hidden"
 
 
 def normalize_rel_path(path: str) -> str:
@@ -65,6 +66,18 @@ class GameEntry:
         child = self.element.find(tag)
         if child is not None:
             self.element.remove(child)
+
+    @property
+    def hidden(self) -> bool:
+        """Whether EmulationStation hides this game (``<hidden>true</hidden>``)."""
+        return self.get(HIDDEN_TAG).lower() == "true"
+
+    @hidden.setter
+    def hidden(self, value: bool) -> None:
+        if value:
+            self.set(HIDDEN_TAG, "true")
+        else:
+            self.remove(HIDDEN_TAG)
 
     def tags(self) -> dict[str, str]:
         """All non-empty child tags as a dict."""

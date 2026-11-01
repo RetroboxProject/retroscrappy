@@ -48,6 +48,11 @@ The window goes from general to specific:
    - Every text field can be edited by hand; the ⟳ button next to it fills
      it from a source, and *Fetch all text* fills every field at once.
      Press **Save** to write text changes to `gamelist.xml`.
+   - *Hidden in EmulationStation* writes `<hidden>true</hidden>` so the game
+     stays listed but does not show up in the frontend (useful for launcher
+     entries such as the Steam Linux Runtime or Battle.net). Right-click
+     several games in the table to hide or show them at once. Hidden games
+     are skipped by bulk scrapes unless you select them explicitly.
 
 **Scrape…** opens one dialog with three questions: which games (selected,
 current system or ticked systems), what to fetch (tick only *Screenshot* to

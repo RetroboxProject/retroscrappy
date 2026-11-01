@@ -11,7 +11,7 @@ from retroscrappy.core.settings import Settings
 from retroscrappy.gui.game_editor import date_from_display, date_to_display
 from retroscrappy.pipeline.interaction import AutoInteraction
 from retroscrappy.pipeline.media import import_media_file, remove_media
-from retroscrappy.pipeline.single import ItemFetcher, edit_entry
+from retroscrappy.pipeline.single import ItemFetcher, edit_entry, set_hidden
 from retroscrappy.providers.base import GameData, GameQuery, Match, Provider
 
 
@@ -73,6 +73,19 @@ def test_fetcher_matches_once_per_game(roms: Path, registry) -> None:
         Field.DEVELOPER: "Nintendo"
     }
     assert provider.finds == 1
+
+
+def test_set_hidden(roms: Path, registry) -> None:
+    """Hiding writes <hidden>true</hidden> (adding unlisted ROMs); showing removes it."""
+    system = _snes(roms, registry)
+    paths = {"./Super Mario World (USA).sfc", "./Chrono Trigger (USA).sfc"}
+    assert set_hidden(system, paths, True) == 2
+    gamelist = Gamelist.for_system(system.path)
+    assert all(gamelist.find(p).hidden for p in paths)  # type: ignore[union-attr]
+    assert set_hidden(system, paths, True) == 0
+    assert set_hidden(system, {"./Chrono Trigger (USA).sfc"}, False) == 1
+    entry = Gamelist.for_system(system.path).find("./Chrono Trigger (USA).sfc")
+    assert entry is not None and not entry.hidden and not entry.get("hidden")
 
 
 def test_date_conversion() -> None:

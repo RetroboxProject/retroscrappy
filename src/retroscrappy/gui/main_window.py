@@ -41,6 +41,7 @@ from retroscrappy.gui.library_view import GameRow, load_rows
 from retroscrappy.gui.panels import ActivityPanel, EmptyState, GamesPanel, SystemsPanel
 from retroscrappy.pipeline.interaction import RunSummary
 from retroscrappy.pipeline.scraper import ScrapeRequest
+from retroscrappy.pipeline.single import set_hidden
 
 _log = get_logger("gui")
 _PAGE_EMPTY, _PAGE_LIBRARY = 0, 1
@@ -73,6 +74,7 @@ class MainWindow(QMainWindow):
         self._systems.current_changed.connect(self._load_current_system)
         self._games.game_selected.connect(self._show_game)
         self._editor.changed.connect(self._reload_keeping)
+        self._games.visibility_requested.connect(self._set_visibility)
         self._activity.cancel_requested.connect(self._cancel_scrape)
 
         self._build_toolbar()
@@ -170,6 +172,19 @@ class MainWindow(QMainWindow):
     def _reload_keeping(self, rel_path: str) -> None:
         system = self._systems.current()
         self._games.set_rows(load_rows(system) if system else [], keep=rel_path)
+
+    @Slot(object, bool)
+    def _set_visibility(self, rel_paths: set[str], hidden: bool) -> None:
+        system = self._systems.current()
+        if system is None or self._busy:
+            return
+        try:
+            changed = set_hidden(system, rel_paths, hidden)
+        except OSError as exc:
+            _log.error("Cannot update gamelist.xml: %s", exc)
+            return
+        _log.info("[%s] %d games %s", system.folder, changed, "hidden" if hidden else "shown")
+        self._reload_keeping(next(iter(sorted(rel_paths)), ""))
 
     @Slot(object)
     def _show_game(self, row: GameRow | None) -> None:

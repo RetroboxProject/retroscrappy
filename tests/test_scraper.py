@@ -117,6 +117,26 @@ def test_unavailable_provider_is_disabled(roms: Path, registry) -> None:
     assert summary.failed == 1 and summary.unchanged == 1
 
 
+def test_hidden_games_are_skipped(roms: Path, registry) -> None:
+    """Hidden entries are left alone unless explicitly selected."""
+    gamelist = Gamelist.for_system(roms / "snes")
+    mario = gamelist.find("./Super Mario World (USA).sfc")
+    assert mario is not None
+    mario.hidden = True
+    gamelist.mark_dirty()
+    gamelist.save()
+    provider = FakeProvider("screenscraper", GameData(fields={Field.GENRE: "x"}))
+    request = ScrapeRequest(
+        systems=_snes(roms, registry), fields={Field.GENRE}, media=set(), mode=MatchMode.AUTO
+    )
+    Scraper(Settings(), {"screenscraper": provider}, AutoInteraction()).run(request)
+    assert provider.finds == 1  # only Chrono Trigger
+
+    request.only = {"snes": {"./Super Mario World (USA).sfc"}}
+    Scraper(Settings(), {"screenscraper": provider}, AutoInteraction()).run(request)
+    assert provider.finds == 2
+
+
 class RecordingInteraction(AutoInteraction):
     """Records questions and skips everything."""
 
