@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import configparser
 import os
+import tempfile
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -18,11 +19,9 @@ from retroscrappy.core.frontends import DEFAULT_FRONTEND, FRONTENDS
 from retroscrappy.core.items import (
     DEFAULT_FIELDS,
     DEFAULT_MEDIA,
-    METADATA_KEY,
     Field,
     Item,
     MediaKind,
-    item_key,
     parse_fields,
     parse_media,
 )
@@ -30,9 +29,11 @@ from retroscrappy.core.logs import get_logger
 
 _log = get_logger("settings")
 
-PROFILES = ("console", "pc")
+#: Key of the 0.2 "all text fields" priority entry, read for migration only.
+METADATA_KEY = "metadata"
 PROVIDER_KEYS = ("screenscraper", "steamgriddb", "igdb")
-PRIORITY_KEYS = (METADATA_KEY, *(k.value for k in MediaKind))
+#: Every item that has its own source order, in display order.
+PRIORITY_KEYS = tuple(i.value for i in (*Field, *MediaKind))
 
 
 class MatchMode(StrEnum):
@@ -43,34 +44,22 @@ class MatchMode(StrEnum):
     MANUAL = "manual"  # always confirm game and pick media
 
 
-def _default_priorities() -> dict[str, dict[str, list[str]]]:
+def _default_priorities() -> dict[str, list[str]]:
     ss, sg, ig = PROVIDER_KEYS
-    console = {
-        METADATA_KEY: [ss, ig],
-        MediaKind.IMAGE: [ss, ig],
-        MediaKind.THUMBNAIL: [ss, ig, sg],
-        MediaKind.MARQUEE: [ss, sg],
-        MediaKind.TITLESHOT: [ss],
-        MediaKind.FANART: [ss, sg, ig],
-        MediaKind.BOXBACK: [ss],
-        MediaKind.VIDEO: [ss],
-        MediaKind.MANUAL: [ss],
-    }
-    pc = {
-        METADATA_KEY: [ss, ig],
-        MediaKind.IMAGE: [ig, ss],
-        MediaKind.THUMBNAIL: [sg, ig, ss],
-        MediaKind.MARQUEE: [sg, ss],
-        MediaKind.TITLESHOT: [ss],
-        MediaKind.FANART: [sg, ig, ss],
-        MediaKind.BOXBACK: [ss],
-        MediaKind.VIDEO: [ss],
-        MediaKind.MANUAL: [ss],
-    }
-    return {
-        "console": {str(k): v for k, v in console.items()},
-        "pc": {str(k): v for k, v in pc.items()},
-    }
+    table: dict[str, list[str]] = {f.value: [ss, ig] for f in Field}
+    table.update(
+        {
+            MediaKind.IMAGE.value: [ss, ig],
+            MediaKind.THUMBNAIL.value: [ss, sg, ig],
+            MediaKind.MARQUEE.value: [ss, sg],
+            MediaKind.TITLESHOT.value: [ss],
+            MediaKind.FANART.value: [ss, sg, ig],
+            MediaKind.BOXBACK.value: [ss],
+            MediaKind.VIDEO.value: [ss],
+            MediaKind.MANUAL.value: [ss],
+        }
+    )
+    return table
 
 
 @dataclass
@@ -94,9 +83,9 @@ class LibrarySettings:
 
 @dataclass
 class RegionSettings:
-    """Preferred language for text and region order for names, dates and media."""
+    """Language order for text and region order for names, dates and media."""
 
-    language: str = "en"
+    languages: list[str] = field(default_factory=lambda: ["en"])
     regions: list[str] = field(default_factory=lambda: ["eu", "us", "wor", "jp"])
 
 
@@ -165,12 +154,11 @@ class Settings:
     screenscraper: ScreenScraperAccount = field(default_factory=ScreenScraperAccount)
     steamgriddb: SteamGridDBAccount = field(default_factory=SteamGridDBAccount)
     igdb: IGDBAccount = field(default_factory=IGDBAccount)
-    priorities: dict[str, dict[str, list[str]]] = field(default_factory=_default_priorities)
+    priorities: dict[str, list[str]] = field(default_factory=_default_priorities)
 
-    def priority(self, profile: str, item: Item) -> list[str]:
-        """Ordered provider keys to try for ``item`` on a platform profile."""
-        table = self.priorities.get(profile) or self.priorities["console"]
-        return list(table.get(item_key(item), []))
+    def priority(self, item: Item) -> list[str]:
+        """Ordered provider keys to try for ``item``."""
+        return list(self.priorities.get(item.value, []))
 
 
 # ── INI conversion ───────────────────────────────────────────────────────
@@ -197,11 +185,13 @@ def _read_ini(parser: configparser.ConfigParser) -> Settings:
     s.library.roms_dir = get("library", "roms_dir", fallback="")
     s.library.es_systems = get("library", "es_systems", fallback="")
 
-    s.region.language = get("region", "language", fallback=s.region.language)
+    languages = _split(get("region", "languages", fallback=""))
+    legacy_language = get("region", "language", fallback="").strip()
+    s.region.languages = languages or ([legacy_language] if legacy_language else ["en"])
     s.region.regions = _split(get("region", "regions", fallback="")) or s.region.regions
 
     try:
-        s.scrape.mode = MatchMode(get("scrape", "mode", fallback=s.scrape.mode))
+        s.scrape.mode = MatchMode(get("scrape", "mode", fallback=MatchMode.SEMI.value))
     except ValueError:
         s.scrape.mode = MatchMode.SEMI
     s.scrape.overwrite = getbool("scrape", "overwrite", fallback=False)
@@ -220,13 +210,22 @@ def _read_ini(parser: configparser.ConfigParser) -> Settings:
             else:
                 setattr(account, attr, get(name, attr, fallback=default).strip())
 
-    for profile in PROFILES:
-        section = f"priority.{profile}"
-        for key in PRIORITY_KEYS:
-            if parser.has_option(section, key):
-                order = [p for p in _split(get(section, key)) if p in PROVIDER_KEYS]
-                s.priorities[profile][key] = order
+    _read_priorities(parser, s)
     return s
+
+
+def _read_priorities(parser: configparser.ConfigParser, s: Settings) -> None:
+    """``[priority]``, or the 0.2 ``[priority.console]`` table if that is all there is."""
+    section = "priority" if parser.has_section("priority") else "priority.console"
+    if not parser.has_section(section):
+        return
+    legacy_text = parser.get(section, METADATA_KEY, fallback=None)
+    for key in PRIORITY_KEYS:
+        raw = parser.get(section, key, fallback=None)
+        if raw is None and key in {f.value for f in Field}:
+            raw = legacy_text
+        if raw is not None:
+            s.priorities[key] = [p for p in _split(raw) if p in PROVIDER_KEYS]
 
 
 def _write_ini(s: Settings) -> configparser.ConfigParser:
@@ -236,13 +235,16 @@ def _write_ini(s: Settings) -> configparser.ConfigParser:
         "roms_dir": s.library.roms_dir,
         "es_systems": s.library.es_systems,
     }
-    parser["region"] = {"language": s.region.language, "regions": _join(s.region.regions)}
+    parser["region"] = {
+        "languages": _join(s.region.languages),
+        "regions": _join(s.region.regions),
+    }
     parser["scrape"] = {
-        "mode": s.scrape.mode.value,
+        "mode": MatchMode(s.scrape.mode).value,
         "overwrite": str(s.scrape.overwrite).lower(),
         "add_missing_roms": str(s.scrape.add_missing_roms).lower(),
-        "fields": _join({f.value for f in s.scrape.fields}),
-        "media": _join({m.value for m in s.scrape.media}),
+        "fields": _join({str(f) for f in s.scrape.fields}),
+        "media": _join({str(m) for m in s.scrape.media}),
         "hash_max_mb": str(s.scrape.hash_max_mb),
     }
     for name in PROVIDER_KEYS:
@@ -250,10 +252,7 @@ def _write_ini(s: Settings) -> configparser.ConfigParser:
             k: (str(v).lower() if isinstance(v, bool) else str(v))
             for k, v in vars(getattr(s, name)).items()
         }
-    for profile in PROFILES:
-        parser[f"priority.{profile}"] = {
-            key: _join(s.priorities[profile].get(key, [])) for key in PRIORITY_KEYS
-        }
+    parser["priority"] = {key: _join(s.priorities.get(key, [])) for key in PRIORITY_KEYS}
     return parser
 
 
@@ -310,10 +309,17 @@ def load_settings(path: Path | None = None) -> Settings:
 
 
 def save_settings(settings: Settings, path: Path | None = None) -> Path:
-    """Write settings with owner-only permissions. Returns the file path."""
+    """Write settings atomically with owner-only permissions. Returns the file path."""
     path = path or paths.config_file()
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        _write_ini(settings).write(handle)
+    parser = _write_ini(settings)  # fail before touching the file
+    fd, tmp_name = tempfile.mkstemp(prefix=".config-", suffix=".ini", dir=path.parent)
+    try:
+        os.chmod(tmp_name, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            parser.write(handle)
+        os.replace(tmp_name, path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
     return path

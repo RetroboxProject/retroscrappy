@@ -78,15 +78,42 @@ def test_settings_roundtrip() -> None:
     settings.library.roms_dir = "/userdata/roms"
     settings.scrape.mode = MatchMode.MANUAL
     settings.scrape.media = {MediaKind.VIDEO}
-    settings.priorities["pc"]["thumbnail"] = ["igdb"]
+    settings.priorities["thumbnail"] = ["igdb"]
+    settings.region.languages = ["es", "en"]
     path = save_settings(settings)
     assert path.stat().st_mode & 0o077 == 0
     loaded = load_settings()
     assert loaded.library.roms_dir == "/userdata/roms"
     assert loaded.scrape.mode is MatchMode.MANUAL
     assert loaded.scrape.media == {MediaKind.VIDEO}
-    assert loaded.priority("pc", MediaKind.THUMBNAIL) == ["igdb"]
-    assert loaded.priority("console", Field.DESC) == ["screenscraper", "igdb"]
+    assert loaded.priority(MediaKind.THUMBNAIL) == ["igdb"]
+    assert loaded.priority(Field.DESC) == ["screenscraper", "igdb"]
+    assert loaded.region.languages == ["es", "en"]
+
+
+def test_settings_from_v02_format() -> None:
+    """0.2 files (per-profile priorities, single language, str mode) still load."""
+    path = paths.config_file()
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "[region]\nlanguage = es\n[scrape]\nmode = manual\n"
+        "[priority.console]\nmetadata = igdb\nthumbnail = steamgriddb, screenscraper\n"
+        "[priority.pc]\nthumbnail = igdb\n",
+        encoding="utf-8",
+    )
+    loaded = load_settings()
+    assert loaded.region.languages == ["es"]
+    assert loaded.scrape.mode is MatchMode.MANUAL
+    assert loaded.priority(Field.GENRE) == ["igdb"]
+    assert loaded.priority(MediaKind.THUMBNAIL) == ["steamgriddb", "screenscraper"]
+
+
+def test_save_accepts_plain_string_mode() -> None:
+    """Qt hands enum values back as str; saving must not crash or truncate the file."""
+    settings = Settings()
+    settings.scrape.mode = "auto"  # type: ignore[assignment]
+    save_settings(settings)
+    assert load_settings().scrape.mode is MatchMode.AUTO
 
 
 def test_legacy_settings_migration() -> None:

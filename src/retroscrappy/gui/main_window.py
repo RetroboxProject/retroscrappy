@@ -2,8 +2,8 @@
 
 Layout, from general to specific::
 
-    ┌ toolbar: Scrape… · Rescan · Settings ──────── frontend · ROM folder ┐
-    │ Systems (tick to include) │ Games of the system │ Selected game      │
+    ┌ toolbar: Scrape… · Rescan · Settings ───────────────────────────────┐
+    │ Systems (tick to include) │ Games of the system │ Game editor        │
     ├ Activity: status · progress · Cancel · log ─────────────────────────┤
 
 Everything that configures the program lives in the Settings window;
@@ -18,16 +18,11 @@ from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
-    QLabel,
     QMainWindow,
-    QPushButton,
-    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QStyle,
     QToolBar,
-    QVBoxLayout,
-    QWidget,
 )
 
 from retroscrappy import __version__
@@ -41,8 +36,9 @@ from retroscrappy.gui.bridge import PendingQuestion, QtLogHandler, ScrapeWorker
 from retroscrappy.gui.dialogs.pickers import pick_match, pick_media
 from retroscrappy.gui.dialogs.scrape_dialog import Scope, ScopeCounts, ScrapeChoice, ScrapeDialog
 from retroscrappy.gui.dialogs.settings_dialog import SettingsDialog
-from retroscrappy.gui.library_view import GameDetail, load_rows
-from retroscrappy.gui.panels import ActivityPanel, GamesPanel, SystemsPanel
+from retroscrappy.gui.game_editor import GameEditor
+from retroscrappy.gui.library_view import GameRow, load_rows
+from retroscrappy.gui.panels import ActivityPanel, EmptyState, GamesPanel, SystemsPanel
 from retroscrappy.pipeline.interaction import RunSummary
 from retroscrappy.pipeline.scraper import ScrapeRequest
 
@@ -63,8 +59,9 @@ class MainWindow(QMainWindow):
         self._systems = SystemsPanel()
         self._games = GamesPanel()
         self._activity = ActivityPanel()
-        self._empty_text = QLabel()
-        self._library_label = QLabel()
+        self._editor = GameEditor()
+        self._editor.set_settings(self._settings)
+        self._empty = EmptyState()
         self._stack = QStackedWidget()
         self._scrape_action = QAction(self._icon("SP_MediaPlay"), self.tr("Scrape…"), self)
 
@@ -74,12 +71,12 @@ class MainWindow(QMainWindow):
         get_logger().addHandler(self._log_handler)
 
         self._systems.current_changed.connect(self._load_current_system)
-        detail = GameDetail()
-        self._games.game_selected.connect(detail.show_row)
+        self._games.game_selected.connect(self._show_game)
+        self._editor.changed.connect(self._reload_keeping)
         self._activity.cancel_requested.connect(self._cancel_scrape)
 
         self._build_toolbar()
-        self._build_central(detail)
+        self._build_central()
         self._build_activity_dock()
         self._rescan()
 
@@ -107,33 +104,19 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         toolbar.addAction(rescan)
         toolbar.addAction(settings)
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        toolbar.addWidget(spacer)
-        self._library_label.setStyleSheet("color: palette(placeholder-text); padding-right: 8px;")
-        toolbar.addWidget(self._library_label)
         self.addToolBar(toolbar)
 
-    def _build_central(self, detail: GameDetail) -> None:
-        empty = QWidget()
-        column = QVBoxLayout(empty)
-        self._empty_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_text.setWordWrap(True)
-        button = QPushButton(self.tr("Open library settings…"))
-        button.clicked.connect(lambda: self._open_settings(page=0))
-        column.addStretch(1)
-        column.addWidget(self._empty_text)
-        column.addWidget(button, 0, Qt.AlignmentFlag.AlignHCenter)
-        column.addStretch(2)
+    def _build_central(self) -> None:
+        self._empty.settings_requested.connect(self._open_settings_window)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._systems)
         splitter.addWidget(self._games)
-        splitter.addWidget(detail)
-        splitter.setSizes([230, 560, 460])
+        splitter.addWidget(self._editor)
+        splitter.setSizes([220, 500, 560])
         splitter.setChildrenCollapsible(False)
 
-        self._stack.addWidget(empty)
+        self._stack.addWidget(self._empty)
         self._stack.addWidget(splitter)
         self.setCentralWidget(self._stack)
 
@@ -143,14 +126,17 @@ class MainWindow(QMainWindow):
         dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable)
         dock.setWidget(self._activity)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
-        self.resizeDocks([dock], [200], Qt.Orientation.Vertical)
+        self.resizeDocks([dock], [140], Qt.Orientation.Vertical)
 
     # ── Library ──────────────────────────────────────────────────────────
+
+    def _set_title(self, library: str) -> None:
+        self.setWindowTitle(f"{library} — Retroscrappy {__version__}")
 
     def _show_empty(self, text: str) -> None:
         self._systems.set_systems([])
         self._games.set_rows([])
-        self._empty_text.setText(text)
+        self._empty.set_text(text)
         self._stack.setCurrentIndex(_PAGE_EMPTY)
         self._scrape_action.setEnabled(False)
 
@@ -160,14 +146,14 @@ class MainWindow(QMainWindow):
         roms = self._settings.library.roms_path or frontend.default_roms_dir()
         es_file = self._settings.library.es_systems_path or frontend.default_es_systems()
         if roms is None or not roms.is_dir():
-            self._library_label.setText(frontend.label)
+            self._set_title(frontend.label)
             self._show_empty(
                 self.tr("No ROM folder yet.\nChoose your {frontend} roms/ folder to start.").format(
                     frontend=frontend.label
                 )
             )
             return
-        self._library_label.setText(f"{frontend.label} · {roms}")
+        self._set_title(f"{frontend.label} · {roms}")
         systems = discover_systems(roms, load_registry(paths.user_platforms_file()), es_file)
         if not systems:
             self._show_empty(self.tr("No systems found in {path}").format(path=roms))
@@ -178,8 +164,16 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _load_current_system(self) -> None:
+        self._reload_keeping("")
+
+    @Slot(str)
+    def _reload_keeping(self, rel_path: str) -> None:
         system = self._systems.current()
-        self._games.set_rows(load_rows(system) if system else [])
+        self._games.set_rows(load_rows(system) if system else [], keep=rel_path)
+
+    @Slot(object)
+    def _show_game(self, row: GameRow | None) -> None:
+        self._editor.set_game(self._systems.current(), row)
 
     # ── Settings ─────────────────────────────────────────────────────────
 
@@ -196,6 +190,7 @@ class MainWindow(QMainWindow):
     def _apply_settings(self, settings: Settings) -> None:
         library_changed = settings.library != self._settings.library
         self._settings = settings
+        self._editor.set_settings(settings)
         try:
             save_settings(settings)
         except OSError as exc:
@@ -271,6 +266,7 @@ class MainWindow(QMainWindow):
         worker.interaction.media_requested.connect(self._ask_media)
         self._worker = worker
         self._scrape_action.setEnabled(False)
+        self._editor.setEnabled(False)
         self._activity.set_running(True)
         worker.start(request)
 
@@ -282,6 +278,7 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_scrape_finished(self, summary: RunSummary) -> None:
         self._activity.set_running(False)
+        self._editor.setEnabled(True)
         self._scrape_action.setEnabled(self._stack.currentIndex() == _PAGE_LIBRARY)
         text = self.tr("{updated} updated · {unchanged} unchanged · {failed} failed").format(
             updated=summary.updated, unchanged=summary.unchanged, failed=summary.failed

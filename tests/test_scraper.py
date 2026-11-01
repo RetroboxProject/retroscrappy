@@ -10,7 +10,7 @@ from retroscrappy.core.gamelist import Gamelist
 from retroscrappy.core.items import Field, MediaKind
 from retroscrappy.core.library import discover_systems
 from retroscrappy.core.settings import MatchMode, Settings
-from retroscrappy.pipeline import scraper as scraper_module
+from retroscrappy.pipeline import media as media_module
 from retroscrappy.pipeline.interaction import AutoInteraction
 from retroscrappy.pipeline.scraper import ScrapeRequest, Scraper
 from retroscrappy.providers.base import (
@@ -63,7 +63,7 @@ def fake_download(monkeypatch: pytest.MonkeyPatch) -> None:
         dest.write_text(url, encoding="utf-8")
         return dest
 
-    monkeypatch.setattr(scraper_module, "download", _download)
+    monkeypatch.setattr(media_module, "download", _download)
 
 
 def _snes(roms: Path, registry):
@@ -73,8 +73,8 @@ def _snes(roms: Path, registry):
 def test_priority_and_missing_only(roms: Path, registry) -> None:
     """Sources are tried in order and only missing items are filled."""
     settings = Settings()
-    settings.priorities["console"]["metadata"] = ["screenscraper", "igdb"]
-    settings.priorities["console"]["thumbnail"] = ["screenscraper", "igdb"]
+    for key in ("developer", "genre", "desc", "thumbnail"):
+        settings.priorities[key] = ["screenscraper", "igdb"]
     first = FakeProvider("screenscraper", GameData(fields={Field.DEVELOPER: "Nintendo EAD"}))
     second = FakeProvider(
         "igdb",

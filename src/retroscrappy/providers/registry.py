@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from retroscrappy.core.items import METADATA_KEY, MediaKind
+from retroscrappy.core.items import Field, Item, MediaKind
 from retroscrappy.core.settings import Settings
 from retroscrappy.providers.base import Provider
 from retroscrappy.providers.igdb import IGDBProvider
@@ -15,11 +15,23 @@ PROVIDER_CLASSES: dict[str, type[Provider]] = {
 PROVIDER_LABELS = {key: cls.label for key, cls in PROVIDER_CLASSES.items()}
 
 
-def providers_for(priority_key: str) -> list[str]:
-    """Provider keys able to supply a priority-table key (``metadata`` or a media kind)."""
-    if priority_key == METADATA_KEY:
-        return [key for key, cls in PROVIDER_CLASSES.items() if cls.fields]
-    return [key for key, cls in PROVIDER_CLASSES.items() if MediaKind(priority_key) in cls.media]
+def parse_item(key: str) -> Item:
+    """Field or media kind from its tag name."""
+    return Field(key) if key in {f.value for f in Field} else MediaKind(key)
+
+
+def providers_for(item: Item) -> list[str]:
+    """Provider keys able to supply ``item``, in registry order."""
+    return [key for key, cls in PROVIDER_CLASSES.items() if item in cls.fields or item in cls.media]
+
+
+def available_providers_for(item: Item, settings: Settings) -> list[str]:
+    """Like :func:`providers_for` but only enabled and configured providers."""
+    return [
+        key
+        for key in providers_for(item)
+        if getattr(settings, key).enabled and getattr(settings, key).configured
+    ]
 
 
 def build_provider(key: str, settings: Settings) -> Provider:

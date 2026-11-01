@@ -160,7 +160,7 @@ class ScrapeDialog(QDialog):
         return box
 
     def _update_mode_help(self) -> None:
-        self._mode_help.setText(mode_help(self._mode.currentData()))
+        self._mode_help.setText(mode_help(MatchMode(self._mode.currentData())))
 
     # ── Result ───────────────────────────────────────────────────────────
 
@@ -171,7 +171,7 @@ class ScrapeDialog(QDialog):
             scope=scope,
             fields=self._fields.checked(),
             media=self._media.checked(),
-            mode=self._mode.currentData(),
+            mode=MatchMode(self._mode.currentData()),
             overwrite=self._overwrite.isChecked(),
             add_missing_roms=self._add_missing.isChecked(),
             remember=self._remember.isChecked(),

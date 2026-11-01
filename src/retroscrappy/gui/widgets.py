@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QMouseEvent, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -80,6 +82,11 @@ class OrderedCheckList(QListWidget):
             item.setCheckState(Qt.CheckState.Checked if on else Qt.CheckState.Unchecked)
             self.addItem(item)
 
+    def fit_rows(self) -> None:
+        """Make the list exactly as tall as its rows (no scrolling)."""
+        rows = max(self.count(), 1)
+        self.setFixedHeight(self.sizeHintForRow(0) * rows + 2 * self.frameWidth() + 2)
+
     def checked_keys(self) -> list[str]:
         """Ticked keys in display order."""
         return [
@@ -115,29 +122,56 @@ class ItemChecklist(QWidget):
         return {item for item, box in self._boxes.items() if box.isChecked()}
 
 
-class ImageView(QLabel):
-    """Fixed-size image preview with a placeholder text."""
+class MediaSlot(QFrame):
+    """Clickable media box: image preview, or a text status for videos/manuals."""
 
-    def __init__(self, size: QSize, placeholder: str, parent: QWidget | None = None):
+    clicked = Signal()
+
+    def __init__(self, title: str, size: QSize, preview: bool, parent: QWidget | None = None):
         super().__init__(parent)
         self._size = size
-        self._placeholder = placeholder
-        self.setFixedSize(size)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet("QLabel { border: 1px dashed palette(mid); border-radius: 4px; }")
+        self._preview = preview
+        self._title = title
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(self.tr("Click to fetch, choose a file or remove"))
+        self._picture = QLabel()
+        self._picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._picture.setFixedSize(size)
+        self._caption = QLabel(title)
+        self._caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._caption.setStyleSheet("font-size: 8pt; color: palette(placeholder-text);")
+        column = QVBoxLayout(self)
+        column.setContentsMargins(4, 4, 4, 4)
+        column.setSpacing(2)
+        column.addWidget(self._picture)
+        column.addWidget(self._caption)
         self.show_file(None)
 
     def show_file(self, path: Path | None) -> None:
-        """Display ``path`` scaled to fit, or the placeholder."""
-        pixmap = QPixmap(str(path)) if path and path.is_file() else QPixmap()
-        if pixmap.isNull():
-            self.setPixmap(QPixmap())
-            self.setText(self._placeholder)
+        """Display the media at ``path`` (or its absence)."""
+        present = bool(path and path.is_file())
+        self._caption.setText(f"{self._title} ✔" if present else self._title)
+        if not self._preview:
+            self._picture.setPixmap(QPixmap())
+            self._picture.setText(path.name if present and path else self.tr("None"))
+            self._picture.setWordWrap(True)
             return
-        self.setPixmap(
+        pixmap = QPixmap(str(path)) if present and path else QPixmap()
+        if pixmap.isNull():
+            self._picture.setPixmap(QPixmap())
+            self._picture.setText(self.tr("None") if not present else self.tr("Unreadable"))
+            return
+        self._picture.setPixmap(
             pixmap.scaled(
                 self._size,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
         )
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # pylint: disable=invalid-name
+        """Emit :attr:`clicked` on left click."""
+        if event.button() == Qt.MouseButton.LeftButton and self.isEnabled():
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)

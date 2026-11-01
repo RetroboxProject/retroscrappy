@@ -1,4 +1,4 @@
-"""Library browsing widgets: games table and game detail panel."""
+"""Games table: row model, Qt table model and filter."""
 
 from __future__ import annotations
 
@@ -10,26 +10,16 @@ from PySide6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
     QPersistentModelIndex,
-    QSize,
     QSortFilterProxyModel,
     Qt,
 )
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import (
-    QFormLayout,
-    QHBoxLayout,
-    QLabel,
-    QScrollArea,
-    QTextBrowser,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QWidget
 
 from retroscrappy.core.items import Field, MediaKind
 from retroscrappy.core.library import SystemDir, find_roms, resolve_media_path
 from retroscrappy.core.names import title_from_filename
 from retroscrappy.gui.labels import field_label, media_label
-from retroscrappy.gui.widgets import ImageView
 
 #: Indicator columns shown after the name.
 INDICATORS: tuple[Field | MediaKind, ...] = (
@@ -38,15 +28,6 @@ INDICATORS: tuple[Field | MediaKind, ...] = (
     MediaKind.THUMBNAIL,
     MediaKind.MARQUEE,
     MediaKind.VIDEO,
-)
-_DETAIL_FIELDS = (
-    Field.GENRE,
-    Field.DEVELOPER,
-    Field.PUBLISHER,
-    Field.RELEASEDATE,
-    Field.PLAYERS,
-    Field.RATING,
-    Field.FAMILY,
 )
 _ModelIndex = QModelIndex | QPersistentModelIndex
 
@@ -186,70 +167,3 @@ class GamesFilter(QSortFilterProxyModel):
         if self._incomplete_only and isinstance(model, GamesModel):
             return not model.row_at(source_row).complete
         return True
-
-
-class GameDetail(QScrollArea):
-    """Media previews and metadata of the selected game."""
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setWidgetResizable(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        body = QWidget()
-        column = QVBoxLayout(body)
-        column.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        self._title = QLabel()
-        self._title.setWordWrap(True)
-        self._title.setStyleSheet("font-size: 14pt; font-weight: 600;")
-        self._path = QLabel()
-        self._path.setStyleSheet("color: palette(placeholder-text);")
-        self._path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        column.addWidget(self._title)
-        column.addWidget(self._path)
-
-        self._thumb = ImageView(QSize(150, 210), self.tr("No box art"))
-        self._marquee = ImageView(QSize(220, 80), self.tr("No logo"))
-        self._image = ImageView(QSize(220, 124), self.tr("No screenshot"))
-        pictures = QHBoxLayout()
-        pictures.addWidget(self._thumb)
-        right = QVBoxLayout()
-        right.addWidget(self._marquee)
-        right.addWidget(self._image)
-        pictures.addLayout(right)
-        pictures.addStretch(1)
-        column.addLayout(pictures)
-
-        self._meta = QFormLayout()
-        self._meta_labels: dict[Field, QLabel] = {}
-        for fld in _DETAIL_FIELDS:
-            label = QLabel()
-            label.setWordWrap(True)
-            self._meta_labels[fld] = label
-            self._meta.addRow(field_label(fld) + ":", label)
-        column.addLayout(self._meta)
-        self._desc = QTextBrowser()
-        self._desc.setMinimumHeight(120)
-        column.addWidget(self._desc, 1)
-        self.setWidget(body)
-        self.show_row(None)
-
-    def show_row(self, row: GameRow | None) -> None:
-        """Display ``row`` or an empty state."""
-        if row is None:
-            self._title.setText(self.tr("Select a game"))
-            self._path.clear()
-        else:
-            self._title.setText(row.name)
-            self._path.setText(row.rel_path)
-        media = row.media if row else {}
-        self._thumb.show_file(media.get(MediaKind.THUMBNAIL))
-        self._marquee.show_file(media.get(MediaKind.MARQUEE))
-        self._image.show_file(media.get(MediaKind.IMAGE))
-        tags = row.tags if row else {}
-        for fld, label in self._meta_labels.items():
-            value = tags.get(fld.value, "")
-            if fld is Field.RELEASEDATE and len(value) >= 8:
-                value = f"{value[0:4]}-{value[4:6]}-{value[6:8]}"
-            label.setText(value or "—")
-        self._desc.setPlainText(tags.get(Field.DESC.value, ""))

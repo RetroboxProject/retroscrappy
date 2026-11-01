@@ -76,14 +76,6 @@ DEFAULT_MEDIA = frozenset({MediaKind.IMAGE, MediaKind.THUMBNAIL, MediaKind.MARQU
 #: An item is either a text field or a media kind.
 Item = Field | MediaKind
 
-#: Key used in priority tables for "all text fields".
-METADATA_KEY = "metadata"
-
-
-def item_key(item: Item) -> str:
-    """Priority-table key of an item: text fields share ``metadata``."""
-    return METADATA_KEY if isinstance(item, Field) else item.value
-
 
 def parse_fields(values: list[str]) -> set[Field]:
     """Parse field names, silently dropping unknown ones."""

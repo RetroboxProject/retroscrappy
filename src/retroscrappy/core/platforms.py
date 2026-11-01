@@ -25,11 +25,6 @@ class Platform:
     aliases: tuple[str, ...] = ()
     is_pc: bool = False
 
-    @property
-    def profile(self) -> str:
-        """Source-priority profile: ``pc`` or ``console``."""
-        return "pc" if self.is_pc else "console"
-
 
 def generic_platform(folder: str) -> Platform:
     """Placeholder for folders that are not in the table (name-only scraping)."""

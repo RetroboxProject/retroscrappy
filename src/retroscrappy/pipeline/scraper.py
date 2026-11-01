@@ -12,13 +12,12 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from pathlib import Path
 
 import requests
 
 from retroscrappy.core.gamelist import GameEntry
-from retroscrappy.core.items import MEDIA_LAYOUT, Field, Item, MediaKind
-from retroscrappy.core.library import SystemDir, add_missing_roms, has_media, resolve_media_path
+from retroscrappy.core.items import Field, Item, MediaKind
+from retroscrappy.core.library import SystemDir, add_missing_roms, has_media
 from retroscrappy.core.logs import get_logger, log_success
 from retroscrappy.core.settings import MatchMode, Settings
 from retroscrappy.pipeline.interaction import (
@@ -37,7 +36,8 @@ from retroscrappy.providers.base import (
     ProviderError,
     ProviderUnavailable,
 )
-from retroscrappy.providers.http import download, fetch_many_bytes, make_session
+from retroscrappy.pipeline.media import save_media
+from retroscrappy.providers.http import fetch_many_bytes, make_session
 
 _log = get_logger("scraper")
 
@@ -92,6 +92,7 @@ class Scraper:
         if not self._providers:
             _log.error("No data source is configured; add credentials in the settings")
             return summary
+        _log.info("Sources: %s", ", ".join(p.label for p in self._providers.values()))
         try:
             for system in request.systems:
                 self._run_system(system, request, summary)
@@ -178,12 +179,12 @@ class Scraper:
             outcome.status = "skipped"
         elif job.failed:
             outcome.status = "failed"
-        else:
-            _log.info("%s: nothing found", entry.name)
+        if outcome.missing:
+            _log.info("%s: not found: %s", entry.name, ", ".join(outcome.missing))
         return outcome
 
     def _fill_item(self, job: _GameJob, system: SystemDir, entry: GameEntry, item: Item) -> bool:
-        for key in self._settings.priority(system.platform.profile, item):
+        for key in self._settings.priority(item):
             provider = self._providers.get(key)
             if provider is None or not provider.can_provide(item):
                 continue
@@ -212,19 +213,13 @@ class Scraper:
         chosen = self._choose_media(job, kind, provider, candidates)
         if chosen is None:
             return False
-        layout = MEDIA_LAYOUT[kind]
-        base = system.path / layout.folder / f"{entry.stem}{layout.suffix}"
         try:
-            saved = download(
-                self._session, chosen.url, base, chosen.extension or layout.default_ext
-            )
+            save_media(self._session, system.path, entry, kind, chosen)
         except (requests.RequestException, OSError) as exc:
             _log.warning(
                 "%s: %s download failed (%s)", entry.name, kind.value, exc.__class__.__name__
             )
             return False
-        _remove_replaced(system.path, entry.get(kind.value), saved)
-        entry.set(kind.value, f"./{saved.relative_to(system.path).as_posix()}")
         return True
 
     # ── Choices ──────────────────────────────────────────────────────────
@@ -294,7 +289,7 @@ class _GameJob:
     def _match_and_fetch(self, provider: Provider) -> GameData | None:
         matches = provider.find(self.query)
         if not matches:
-            _log.debug("%s: no match on %s", self.query.name, provider.label)
+            _log.info("%s: no match on %s", self.query.name, provider.label)
             return None
         match = self.scraper.choose_match(self, provider, matches)
         if match is None:
@@ -312,16 +307,3 @@ def _ambiguous(candidates: list[MediaCandidate]) -> bool:
     best = candidates[0].score
     second = candidates[1].score or 0
     return best <= 0 or best - second <= SEMI_SCORE_MARGIN
-
-
-def _remove_replaced(system_dir: Path, old_value: str, new_file: Path) -> None:
-    """Delete the previous file of a media tag if it was ours and has another name."""
-    old = resolve_media_path(system_dir, old_value)
-    if not old or old == new_file or not old.is_file():
-        return
-    try:
-        old.resolve().relative_to(system_dir.resolve())
-    except ValueError:
-        return  # outside the system folder: not ours to delete
-    if old.stem == new_file.stem:
-        old.unlink(missing_ok=True)

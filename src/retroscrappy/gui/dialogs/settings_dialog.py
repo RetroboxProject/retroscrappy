@@ -16,12 +16,14 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QStackedWidget,
     QVBoxLayout,
@@ -31,15 +33,18 @@ from PySide6.QtWidgets import (
 from retroscrappy.core.frontends import FRONTENDS
 from retroscrappy.core.items import Field, MediaKind
 from retroscrappy.core.settings import (
-    PRIORITY_KEYS,
-    PROFILES,
     MatchMode,
     Settings,
 )
-from retroscrappy.gui.labels import mode_label, priority_key_label, profile_label
+from retroscrappy.gui.labels import item_label, mode_label
 from retroscrappy.gui.widgets import ItemChecklist, OrderedCheckList, PathPicker
 from retroscrappy.providers.base import ProviderUnavailable
-from retroscrappy.providers.registry import PROVIDER_LABELS, build_provider, providers_for
+from retroscrappy.providers.registry import (
+    PROVIDER_LABELS,
+    build_provider,
+    parse_item,
+    providers_for,
+)
 
 LANGUAGES = {
     "en": "English",
@@ -221,90 +226,80 @@ class AccountsPage(_Page):
 
 
 class SourcesPage(_Page):
-    """Which provider to try first for every item, per platform profile."""
+    """Source order for every text field and media kind, all visible at once."""
+
+    COLUMNS = 3
 
     def __init__(self) -> None:
         super().__init__()
         self.title = self.tr("Sources")
-        self._priorities: dict[str, dict[str, list[str]]] = {}
-        self._current: tuple[str, str] | None = None
-
-        self._profile = QComboBox()
-        for profile in PROFILES:
-            self._profile.addItem(profile_label(profile), profile)
-        self._items = QListWidget()
-        for key in PRIORITY_KEYS:
-            self._items.addItem(priority_key_label(key))
-        self._order = OrderedCheckList()
-
+        self._lists: dict[str, OrderedCheckList] = {}
         hint = QLabel(
             self.tr(
-                "For each item, sources are tried from top to bottom until one has it. "
-                "Drag to reorder; untick to never use a source for that item."
+                "Each item is fetched from the first source in its list that has it. "
+                "Drag to reorder (top = preferred); untick to never use a source for that item."
             )
         )
         hint.setWordWrap(True)
-        top = QFormLayout()
-        top.addRow(self.tr("Platforms:"), self._profile)
-        lists = QHBoxLayout()
-        lists.addWidget(self._items, 1)
-        lists.addWidget(self._order, 1)
-        column = QVBoxLayout(self)
-        column.addLayout(top)
-        column.addWidget(hint)
-        column.addLayout(lists, 1)
+        body = QWidget()
+        column = QVBoxLayout(body)
+        column.addWidget(self._group(self.tr("Text"), list(Field)))
+        column.addWidget(self._group(self.tr("Media"), list(MediaKind)))
+        column.addStretch(1)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(body)
+        layout = QVBoxLayout(self)
+        layout.addWidget(hint)
+        layout.addWidget(scroll, 1)
 
-        self._profile.currentIndexChanged.connect(self._show_current)
-        self._items.currentRowChanged.connect(self._show_current)
-
-    def _commit_current(self) -> None:
-        if self._current:
-            profile, key = self._current
-            self._priorities[profile][key] = self._order.checked_keys()
-
-    def _show_current(self) -> None:
-        self._commit_current()
-        row = self._items.currentRow()
-        if row < 0:
-            return
-        profile = self._profile.currentData()
-        key = PRIORITY_KEYS[row]
-        self._current = (profile, key)
-        capable = providers_for(key)
-        current = [p for p in self._priorities[profile].get(key, []) if p in capable]
-        self._order.set_items(current, capable, PROVIDER_LABELS)
+    def _group(self, title: str, items: list) -> QGroupBox:
+        box = QGroupBox(title)
+        grid = QGridLayout(box)
+        for index, item in enumerate(items):
+            order = OrderedCheckList()
+            self._lists[item.value] = order
+            cell = QVBoxLayout()
+            cell.setSpacing(2)
+            cell.addWidget(QLabel(f"<b>{item_label(item)}</b>"))
+            cell.addWidget(order)
+            cell.addStretch(1)
+            grid.addLayout(cell, index // self.COLUMNS, index % self.COLUMNS)
+        return box
 
     def load(self, settings: Settings) -> None:
-        self._priorities = copy.deepcopy(settings.priorities)
-        self._current = None
-        self._items.setCurrentRow(0)
-        self._show_current()
+        for key, order in self._lists.items():
+            capable = providers_for(parse_item(key))
+            current = [p for p in settings.priorities.get(key, []) if p in capable]
+            order.set_items(current, capable, PROVIDER_LABELS)
+            order.fit_rows()
 
     def store(self, settings: Settings) -> None:
-        self._commit_current()
-        settings.priorities = copy.deepcopy(self._priorities)
+        settings.priorities = {key: order.checked_keys() for key, order in self._lists.items()}
 
 
 class RegionPage(_Page):
-    """Language for text and region order for names, dates and media."""
+    """Language order for descriptions and region order for names, dates and media."""
 
     def __init__(self) -> None:
         super().__init__()
         self.title = self.tr("Language & region")
-        self._language = QComboBox()
-        for code, name in LANGUAGES.items():
-            self._language.addItem(name, code)
+        self._languages = OrderedCheckList()
         self._regions = OrderedCheckList()
+        hint = QLabel(self.tr("Drag to reorder: the first available one is used."))
+        hint.setWordWrap(True)
         form = QFormLayout(self)
-        form.addRow(self.tr("Description language:"), self._language)
+        form.addRow(hint)
+        form.addRow(self.tr("Description languages:"), self._languages)
         form.addRow(self.tr("Preferred regions:"), self._regions)
 
     def load(self, settings: Settings) -> None:
-        self._language.setCurrentIndex(max(self._language.findData(settings.region.language), 0))
+        self._languages.set_items(settings.region.languages, list(LANGUAGES), LANGUAGES)
         self._regions.set_items(settings.region.regions, list(REGIONS), REGIONS)
 
     def store(self, settings: Settings) -> None:
-        settings.region.language = self._language.currentData()
+        settings.region.languages = self._languages.checked_keys() or ["en"]
         settings.region.regions = self._regions.checked_keys() or ["wor"]
 
 
@@ -346,7 +341,7 @@ class DefaultsPage(_Page):
 
     def store(self, settings: Settings) -> None:
         scrape = settings.scrape
-        scrape.mode = self._mode.currentData()
+        scrape.mode = MatchMode(self._mode.currentData())
         scrape.overwrite = self._overwrite.isChecked()
         scrape.add_missing_roms = self._add_missing.isChecked()
         scrape.fields = self._fields.checked()

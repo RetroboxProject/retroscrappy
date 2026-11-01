@@ -10,8 +10,7 @@
 #   screenscraper ScreenScraper "systemeid" (omit if unknown)
 #   igdb          IGDB platform ids (omit if unknown)
 #   aliases       Other folder names that mean the same platform
-#   pc            true for PC launcher collections: uses the "pc" source
-#                 priority profile (SteamGridDB first) instead of "console"
+#   pc            true for PC launcher collections (Steam, Heroic, Lutris...)
 
 [platforms.nes]
 name = "Nintendo Entertainment System"

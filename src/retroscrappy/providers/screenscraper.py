@@ -84,7 +84,7 @@ class ScreenScraperProvider(Provider):
             self._auth["ssid"] = account.username
             self._auth["sspassword"] = account.password
         self._regions = [r.lower() for r in region.regions]
-        self._language = region.language.lower()
+        self._languages = [lang.lower() for lang in region.languages]
         self._hash_max_bytes = max(hash_max_mb, 0) * 1024 * 1024
         self._session = make_session()
 
@@ -240,13 +240,13 @@ class ScreenScraperProvider(Provider):
         return str(best["text"]).strip()
 
     def _by_language(self, items: Any) -> str:
-        """Text in the preferred language, then English, then anything."""
+        """Text in the first available preferred language, then English, then anything."""
         entries = {
             str(i.get("langue") or ""): str(i.get("text") or "")
             for i in items or []
             if isinstance(i, dict)
         }
-        for lang in (self._language, "en"):
+        for lang in (*self._languages, "en"):
             if entries.get(lang):
                 return entries[lang].strip()
         return next((t.strip() for t in entries.values() if t.strip()), "")

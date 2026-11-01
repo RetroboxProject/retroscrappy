@@ -29,6 +29,29 @@ from retroscrappy.gui.library_view import GameRow, GamesFilter, GamesModel
 _LOG_COLOURS = {logging.WARNING: "#b26a00", logging.ERROR: "#c62828", SUCCESS: "#2e7d32"}
 
 
+class EmptyState(QWidget):
+    """Shown instead of the library when there is nothing to browse."""
+
+    settings_requested = Signal()
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._text = QLabel()
+        self._text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._text.setWordWrap(True)
+        button = QPushButton(self.tr("Open library settings…"))
+        button.clicked.connect(self.settings_requested)
+        column = QVBoxLayout(self)
+        column.addStretch(1)
+        column.addWidget(self._text)
+        column.addWidget(button, 0, Qt.AlignmentFlag.AlignHCenter)
+        column.addStretch(2)
+
+    def set_text(self, text: str) -> None:
+        """Explain why the library is empty."""
+        self._text.setText(text)
+
+
 class SystemsPanel(QWidget):
     """List of detected systems; ticked ones form the default scrape scope."""
 
@@ -129,17 +152,25 @@ class GamesPanel(QWidget):
         column.addLayout(filter_row)
         column.addWidget(self._view, 1)
 
-    def set_rows(self, rows: list[GameRow]) -> None:
-        """Show ``rows`` and select the first visible one."""
+    def set_rows(self, rows: list[GameRow], keep: str = "") -> None:
+        """Show ``rows`` and select the one at ``keep`` (or the first visible one)."""
         self._model.set_rows(rows)
         done = sum(1 for r in rows if r.complete)
         self._count.setText(self.tr("{done}/{total} complete").format(done=done, total=len(rows)))
+        target = 0
+        for proxy_row in range(self._filter.rowCount()):
+            source = self._filter.mapToSource(self._filter.index(proxy_row, 0)).row()
+            if keep and self._model.row_at(source).rel_path == keep:
+                target = proxy_row
+                break
         if self._filter.rowCount():
+            index = self._filter.index(target, 0)
             self._view.selectionModel().setCurrentIndex(
-                self._filter.index(0, 0),
+                index,
                 QItemSelectionModel.SelectionFlag.ClearAndSelect
                 | QItemSelectionModel.SelectionFlag.Rows,
             )
+            self._view.scrollTo(index)
         else:
             self.game_selected.emit(None)
 

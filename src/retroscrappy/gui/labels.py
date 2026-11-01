@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QCoreApplication
 
-from retroscrappy.core.items import METADATA_KEY, Field, MediaKind
+from retroscrappy.core.items import Field, MediaKind
 from retroscrappy.core.settings import MatchMode
 
 
@@ -41,11 +41,9 @@ def media_label(kind: MediaKind) -> str:
     }[kind]
 
 
-def priority_key_label(key: str) -> str:
-    """Label of a source-priority key (``metadata`` or a media kind)."""
-    if key == METADATA_KEY:
-        return _tr("Text metadata")
-    return media_label(MediaKind(key))
+def item_label(item: Field | MediaKind) -> str:
+    """Label of a text field or a media kind."""
+    return field_label(item) if isinstance(item, Field) else media_label(item)
 
 
 def mode_label(mode: MatchMode) -> str:
@@ -64,8 +62,3 @@ def mode_help(mode: MatchMode) -> str:
         MatchMode.SEMI: _tr("Asks only when the game or the artwork is ambiguous."),
         MatchMode.MANUAL: _tr("Confirm every game and pick every image yourself."),
     }[mode]
-
-
-def profile_label(profile: str) -> str:
-    """Label of a source-priority profile."""
-    return _tr("PC launchers (Steam, Lutris...)") if profile == "pc" else _tr("Consoles & arcade")

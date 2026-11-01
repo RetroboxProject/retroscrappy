@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtCore import QObject, Signal
@@ -132,6 +133,30 @@ class ScrapeWorker(QObject):
     def game_finished(self, outcome: GameOutcome) -> None:
         """Forward to the main thread."""
         self.game_done.emit(outcome)
+
+
+class BackgroundTask(QObject):
+    """Runs one callable in a thread and reports the result on the main thread."""
+
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, work: Callable[[], Any], parent: QObject | None = None):
+        super().__init__(parent)
+        self._work = work
+
+    def start(self) -> None:
+        """Run in the background."""
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self) -> None:
+        try:
+            result = self._work()
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logging.getLogger("retroscrappy").debug("Background task failed", exc_info=True)
+            self.failed.emit(str(exc) or exc.__class__.__name__)
+        else:
+            self.succeeded.emit(result)
 
 
 class _LogEmitter(QObject):

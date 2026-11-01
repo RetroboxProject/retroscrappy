@@ -41,15 +41,23 @@ The window goes from general to specific:
 2. **Games** (middle): games of the highlighted system with a ✔ for each
    piece of data they already have. Filter by name or show only incomplete
    games. Games in *italics* are on disk but not in `gamelist.xml` yet.
-3. **Game** (right): artwork and metadata of the selected game.
+3. **Game editor** (right): media and metadata of the selected game.
+   - Click any media box (box art, logo, screenshot, video...) to fetch it
+     from a source, pick a file from your computer, open it or remove it.
+     Media changes are written immediately.
+   - Every text field can be edited by hand; the ⟳ button next to it fills
+     it from a source, and *Fetch all text* fills every field at once.
+     Press **Save** to write text changes to `gamelist.xml`.
 
 **Scrape…** opens one dialog with three questions: which games (selected,
-current system or ticked systems), what to fetch, and how many questions to
-ask (*Automatic*, *Ask when unsure*, *Always ask*). Progress and the log are
+current system or ticked systems), what to fetch (tick only *Screenshot* to
+fetch only screenshots, for instance), and how many questions to ask
+(*Automatic*, *Ask when unsure*, *Always ask*). Progress and the log are
 shown at the bottom.
 
 **Settings** holds everything that is configured once: library location,
-accounts, source order, language and regions, and scrape defaults.
+accounts, source order, description languages and regions, and scrape
+defaults.
 
 ## Command line
 
@@ -81,10 +89,11 @@ version (`~/.config/sgdb-scraper/config.ini`) are imported on first run.
 
 ### Source order
 
-Each item (text metadata, box art, logo, screenshot...) has an ordered list
-of sources for two platform profiles: *consoles & arcade* and *PC
-launchers*. Sources are tried top to bottom until one has the item. Each
-source is queried at most once per game.
+Every text field and media kind has its own ordered list of sources
+(*Settings → Sources*, drag to reorder). Sources are tried top to bottom
+until one has the item; each source is queried at most once per game.
+Videos and manuals come from ScreenScraper only. Description languages and
+regions are ordered the same way.
 
 ### Platforms
 
