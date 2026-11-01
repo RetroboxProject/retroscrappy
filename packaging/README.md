@@ -43,17 +43,20 @@ environment. The version always comes from `src/retroscrappy/__init__.py`.
 
 ## Releases (GitHub Actions)
 
-`.github/workflows/packages.yml` runs on every push and pull request:
+`.github/workflows/packages.yml` runs only when a tag `vX.Y.Z` is pushed;
+ordinary commits do not trigger it. It then:
 
-1. pylint, pytest and shellcheck;
-2. builds the `.deb` and `.rpm`;
-3. installs them with `apt` in `debian:trixie` (and, informatively,
+1. checks that the tag points at a commit of `main` and matches
+   `__version__`;
+2. runs pylint, pytest and shellcheck;
+3. builds the `.deb` and `.rpm`;
+4. installs them with `apt` in `debian:trixie` (and, informatively,
    `ubuntu:rolling`) and with `dnf` in `fedora:latest`, opens the main
-   window off-screen and uninstalls them again.
+   window off-screen and uninstalls them again;
+5. publishes a GitHub release with both packages and a `SHA256SUMS` file.
 
-Pushing a tag `vX.Y.Z` that matches `__version__` also publishes a GitHub
-release with both packages and a `SHA256SUMS` file. The maintainer field
-can be changed with the repository variable `PACKAGE_MAINTAINER`.
+The maintainer field can be changed with the repository variable
+`PACKAGE_MAINTAINER`.
 
 ## Icon
 
