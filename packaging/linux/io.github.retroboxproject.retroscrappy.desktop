@@ -8,4 +8,4 @@ Icon=io.github.retroboxproject.retroscrappy
 Terminal=false
 Categories=Game;Utility;
 Keywords=emulationstation;batocera;retrobat;retrobox;scraper;gamelist;
-StartupWMClass=retroscrappy-gui
+StartupWMClass=io.github.retroboxproject.retroscrappy

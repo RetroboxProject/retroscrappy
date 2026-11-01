@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,8 @@ name = "retroscrappy"
 dynamic = ["version"]
 description = "Metadata and media scraper for EmulationStation (Batocera, RetroBat, Retrobox)"
 readme = "README.md"
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{ name = "RetroboxProject" }]
 keywords = ["emulationstation", "batocera", "retrobat", "retrobox", "scraper", "screenscraper", "steamgriddb"]
@@ -42,7 +44,7 @@ version = { attr = "retroscrappy.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-"retroscrappy.data" = ["*.toml"]
+"retroscrappy.data" = ["*.toml", "icons/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

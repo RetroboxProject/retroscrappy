@@ -1,42 +1,68 @@
-# Packaging notes
+# Packaging
 
-Nothing here is built yet; this records how the code is laid out so that
-`.deb`, `.rpm` and PyPI packages can be added later without code changes.
+Retroscrappy is pure Python, so a single architecture-independent package
+(`_all.deb`, `.noarch.rpm`) serves every Debian, Ubuntu and Fedora release
+that ships the dependencies.
 
-## What the code already guarantees
+## Layout on disk
 
-- **Standard `pyproject.toml` (setuptools, `src/` layout).** `python -m build`
-  produces an sdist and a wheel; both are what PyPI, `pybuild` (Debian) and
-  `%pyproject_*` macros (Fedora) consume.
-- **Single version source:** `retroscrappy.__version__`, read by setuptools.
-- **Two entry points:** `retroscrappy` (CLI, console script) and
-  `retroscrappy-gui` (GUI script). No code runs from the source tree.
-- **GUI is optional.** The core and CLI only need `requests`; PySide6 is the
-  `gui` extra. Distro packages can split accordingly (see below).
-- **No writes to the install prefix.** Settings go to
-  `$XDG_CONFIG_HOME/retroscrappy/config.ini` (`%APPDATA%` on Windows), cache
-  to `$XDG_CACHE_HOME/retroscrappy`. Bundled data (`platforms.toml`) is read
-  with `importlib.resources`, so it works from wheels and zip imports.
-- **Desktop integration file** in `data/`, named after the reverse-DNS app id
-  `io.github.retroboxproject.retroscrappy`, which the GUI also sets with
-  `QGuiApplication.setDesktopFileName`.
+Both packages install the same files:
 
-## Suggested package split
+| Path | Contents |
+|---|---|
+| `/opt/retroscrappy/lib/retroscrappy/` | Python package (byte-compiled on install) |
+| `/usr/bin/retroscrappy`, `/usr/bin/retroscrappy-gui` | launchers using the system `python3` |
+| `/usr/share/applications/io.github.retroboxproject.retroscrappy.desktop` | menu entry |
+| `/usr/share/icons/hicolor/*/apps/io.github.retroboxproject.retroscrappy.*` | icon (SVG + PNG sizes) |
+| `/usr/share/metainfo/io.github.retroboxproject.retroscrappy.metainfo.xml` | AppStream data |
 
-| Package | Contents | Depends on |
+The code lives in `/opt` rather than in the distribution's Python path
+because Fedora's `site-packages` path includes the Python version; with
+`/opt` one `.rpm` keeps working across Fedora upgrades.
+
+## Dependencies
+
+| | Debian / Ubuntu | Fedora |
 |---|---|---|
-| `retroscrappy` (deb) / `python3-retroscrappy` (rpm) | Python package, `retroscrappy` CLI | `python3 (>= 3.11)`, `python3-requests` |
-| `retroscrappy-gui` | `retroscrappy-gui`, `.desktop` file, icon | `retroscrappy`, PySide6 (`python3-pyside6.qtwidgets` on Debian, `python3-pyside6` on Fedora) |
+| Required | `python3 (>= 3.11)`, `python3-requests`, `python3-pyside6.qtcore`, `python3-pyside6.qtgui`, `python3-pyside6.qtwidgets` | `python3 >= 3.11`, `python3-requests`, `python3-pyside6` |
+| Recommended | `qt6-wayland` | `qt6-qtwayland` |
 
-PyPI: a single distribution, `pip install retroscrappy` (CLI) or
-`pip install 'retroscrappy[gui]'`.
+PySide6 is packaged in Debian 13 (trixie) and later, Ubuntu after 24.04 and
+current Fedora. On older releases, or on immutable systems, use
+[`install.sh`](../install.sh) instead.
 
-## Still to do when packaging starts
+## Building locally
 
-- Add a `LICENSE` file and the `license` field in `pyproject.toml`.
-- Add an application icon (`data/icons/hicolor/...`) and an AppStream
-  `metainfo.xml`.
-- `debian/` directory (dh-python + pybuild-plugin-pyproject) and an RPM
-  `.spec` using `%pyproject_wheel` / `%pyproject_install`, plus a GitHub
-  Actions workflow like the other RetroboxProject repos.
-- Compile Qt translations (`.ts` → `.qm`) at build time once translations exist.
+```bash
+packaging/build-deb.sh   # needs dpkg-deb  → dist/retroscrappy_<ver>-1_all.deb
+packaging/build-rpm.sh   # needs rpmbuild  → dist/retroscrappy-<ver>-1.noarch.rpm
+```
+
+`PACKAGE_RELEASE` (default `1`) and `PACKAGE_MAINTAINER` can be set in the
+environment. The version always comes from `src/retroscrappy/__init__.py`.
+
+## Releases (GitHub Actions)
+
+`.github/workflows/packages.yml` runs on every push and pull request:
+
+1. pylint, pytest and shellcheck;
+2. builds the `.deb` and `.rpm`;
+3. installs them with `apt` in `debian:trixie` (and, informatively,
+   `ubuntu:rolling`) and with `dnf` in `fedora:latest`, opens the main
+   window off-screen and uninstalls them again.
+
+Pushing a tag `vX.Y.Z` that matches `__version__` also publishes a GitHub
+release with both packages and a `SHA256SUMS` file. The maintainer field
+can be changed with the repository variable `PACKAGE_MAINTAINER`.
+
+## Icon
+
+The master is `linux/icons/hicolor/scalable/apps/io.github.retroboxproject.retroscrappy.svg`.
+After editing it, run `packaging/render-icons.sh` (needs `rsvg-convert`) to
+regenerate the PNG sizes and the copy bundled in the Python package, which
+the window uses when the theme icon is not installed.
+
+## PyPI
+
+`pyproject.toml` is complete (`python -m build` gives an sdist and a wheel);
+the wheel includes the platform table and the window icon.

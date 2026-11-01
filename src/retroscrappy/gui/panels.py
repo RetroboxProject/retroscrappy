@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import QItemSelectionModel, Qt, Signal, Slot
+from PySide6.QtCore import QByteArray, QItemSelectionModel, Qt, Signal, Slot
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -133,9 +133,13 @@ class GamesPanel(QWidget):
         self._view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._view.verticalHeader().hide()
         header = self._view.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(False)
+        header.setSectionsMovable(True)
+        header.setMinimumSectionSize(40)
+        header.resizeSection(0, 260)
         for column in range(1, self._model.columnCount()):
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+            self._view.resizeColumnToContents(column)
         self._view.selectionModel().currentRowChanged.connect(self._emit_current)
         self._view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._view.customContextMenuRequested.connect(self._context_menu)
@@ -181,6 +185,15 @@ class GamesPanel(QWidget):
             self._view.scrollTo(index)
         else:
             self.game_selected.emit(None)
+
+    def header_state(self) -> bytes:
+        """Column widths, order and sort, for :meth:`restore_header`."""
+        return bytes(self._view.horizontalHeader().saveState().data())
+
+    def restore_header(self, state: bytes) -> None:
+        """Restore what :meth:`header_state` returned (ignored if invalid)."""
+        if state:
+            self._view.horizontalHeader().restoreState(QByteArray(state))
 
     def selected_rel_paths(self) -> set[str]:
         """ROM paths of the selected rows."""

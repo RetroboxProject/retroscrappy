@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import copy
 
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import QByteArray, QSettings, Qt, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
@@ -80,6 +80,7 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_central()
         self._build_activity_dock()
+        self._restore_layout()
         self._rescan()
 
     # ── Construction ─────────────────────────────────────────────────────
@@ -112,6 +113,7 @@ class MainWindow(QMainWindow):
         self._empty.settings_requested.connect(self._open_settings_window)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setObjectName("library-splitter")
         splitter.addWidget(self._systems)
         splitter.addWidget(self._games)
         splitter.addWidget(self._editor)
@@ -314,8 +316,37 @@ class MainWindow(QMainWindow):
             pick_media(self, question.query, question.kind, question.provider, question.options)
         )
 
+    # ── Layout persistence ───────────────────────────────────────────────
+
+    @staticmethod
+    def _ui_state() -> QSettings:
+        return QSettings(str(paths.ui_state_file()), QSettings.Format.IniFormat)
+
+    def _restore_layout(self) -> None:
+        state = self._ui_state()
+        for key, restore in (
+            ("window/geometry", self.restoreGeometry),
+            ("window/state", self.restoreState),
+            ("library/splitter", self._stack.widget(_PAGE_LIBRARY).restoreState),
+        ):
+            value = state.value(key)
+            if isinstance(value, QByteArray):
+                restore(value)
+        header = state.value("library/columns")
+        if isinstance(header, QByteArray):
+            self._games.restore_header(bytes(header.data()))
+
+    def _save_layout(self) -> None:
+        state = self._ui_state()
+        state.setValue("window/geometry", self.saveGeometry())
+        state.setValue("window/state", self.saveState())
+        state.setValue("library/splitter", self._stack.widget(_PAGE_LIBRARY).saveState())
+        state.setValue("library/columns", QByteArray(self._games.header_state()))
+        state.sync()
+
     def closeEvent(self, event: QCloseEvent) -> None:  # pylint: disable=invalid-name
-        """Stop any running scrape before closing."""
+        """Stop any running scrape and remember the layout before closing."""
+        self._save_layout()
         if self._worker and self._worker.running:
             self._worker.cancel()
         get_logger().removeHandler(self._log_handler)

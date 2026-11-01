@@ -1,0 +1,3436 @@
+From 97df27245adf59adb89352af2a6d0f05ce3e4fc0 Mon Sep 17 00:00:00 2001
+From: Manu <manu4.2012@gmail.com>
+Date: Sun, 1 Nov 2026 23:03:07 +0000
+Subject: [PATCH] Packaging (.deb/.rpm, install.sh), icon and resizable columns
+
+- Games table columns are resizable and movable; column widths, panel
+  sizes and window layout persist in ~/.config/retroscrappy/ui.ini
+- Application icon (SVG master + rendered PNGs), window icon, AppStream
+  metainfo; desktop file moved to packaging/linux
+- GPL-3.0-only LICENSE and project metadata
+- packaging/build-deb.sh and build-rpm.sh produce architecture-independent
+  packages installing to /opt/retroscrappy with launchers in /usr/bin
+- GitHub Actions: lint/tests, build, install tests on Debian trixie,
+  Ubuntu rolling and Fedora, release with SHA256SUMS on v* tags
+- install.sh: virtual-environment install for immutable systems
+  (--user/--system, --version/--ref, --no-gui, --uninstall)
+- Version 0.4.0
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Sto8EkXHpPudWUAHo72SfR
+---
+ .github/workflows/packages.yml                | 167 +++++
+ .gitignore                                    |   3 +
+ LICENSE                                       | 674 ++++++++++++++++++
+ README.md                                     |  32 +-
+ install.sh                                    | 242 +++++++
+ packaging/README.md                           | 102 ++-
+ packaging/build-deb.sh                        |  38 +
+ packaging/build-rpm.sh                        |  33 +
+ packaging/common.sh                           |  77 ++
+ packaging/deb/control.in                      |  17 +
+ packaging/deb/copyright                       |  18 +
+ packaging/deb/postinst                        |   9 +
+ packaging/deb/prerm                           |  12 +
+ ...io.github.retroboxproject.retroscrappy.png | Bin 0 -> 6042 bytes
+ ...io.github.retroboxproject.retroscrappy.png | Bin 0 -> 677 bytes
+ ...io.github.retroboxproject.retroscrappy.png | Bin 0 -> 1129 bytes
+ ...io.github.retroboxproject.retroscrappy.png | Bin 0 -> 13281 bytes
+ ...io.github.retroboxproject.retroscrappy.png | Bin 0 -> 1429 bytes
+ ...io.github.retroboxproject.retroscrappy.png | Bin 0 -> 2411 bytes
+ ...io.github.retroboxproject.retroscrappy.png | Bin 0 -> 28425 bytes
+ ...io.github.retroboxproject.retroscrappy.png | Bin 0 -> 3041 bytes
+ ...io.github.retroboxproject.retroscrappy.svg |  50 ++
+ ...ithub.retroboxproject.retroscrappy.desktop |   2 +-
+ ....retroboxproject.retroscrappy.metainfo.xml |  30 +
+ packaging/render-icons.sh                     |  20 +
+ packaging/rpm/retroscrappy.spec               |  52 ++
+ pyproject.toml                                |   6 +-
+ python3                                       |   0
+ src/retroscrappy/__init__.py                  |   2 +-
+ src/retroscrappy/core/paths.py                |   5 +
+ src/retroscrappy/data/icons/retroscrappy.png  | Bin 0 -> 13281 bytes
+ src/retroscrappy/gui/app.py                   |  15 +-
+ src/retroscrappy/gui/main_window.py           |  35 +-
+ src/retroscrappy/gui/panels.py                |  19 +-
+ 34 files changed, 1606 insertions(+), 54 deletions(-)
+ create mode 100644 .github/workflows/packages.yml
+ create mode 100644 LICENSE
+ create mode 100755 install.sh
+ create mode 100755 packaging/build-deb.sh
+ create mode 100755 packaging/build-rpm.sh
+ create mode 100644 packaging/common.sh
+ create mode 100644 packaging/deb/control.in
+ create mode 100644 packaging/deb/copyright
+ create mode 100644 packaging/deb/postinst
+ create mode 100644 packaging/deb/prerm
+ create mode 100644 packaging/linux/icons/hicolor/128x128/apps/io.github.retroboxproject.retroscrappy.png
+ create mode 100644 packaging/linux/icons/hicolor/16x16/apps/io.github.retroboxproject.retroscrappy.png
+ create mode 100644 packaging/linux/icons/hicolor/24x24/apps/io.github.retroboxproject.retroscrappy.png
+ create mode 100644 packaging/linux/icons/hicolor/256x256/apps/io.github.retroboxproject.retroscrappy.png
+ create mode 100644 packaging/linux/icons/hicolor/32x32/apps/io.github.retroboxproject.retroscrappy.png
+ create mode 100644 packaging/linux/icons/hicolor/48x48/apps/io.github.retroboxproject.retroscrappy.png
+ create mode 100644 packaging/linux/icons/hicolor/512x512/apps/io.github.retroboxproject.retroscrappy.png
+ create mode 100644 packaging/linux/icons/hicolor/64x64/apps/io.github.retroboxproject.retroscrappy.png
+ create mode 100644 packaging/linux/icons/hicolor/scalable/apps/io.github.retroboxproject.retroscrappy.svg
+ rename {data => packaging/linux}/io.github.retroboxproject.retroscrappy.desktop (86%)
+ create mode 100644 packaging/linux/io.github.retroboxproject.retroscrappy.metainfo.xml
+ create mode 100755 packaging/render-icons.sh
+ create mode 100644 packaging/rpm/retroscrappy.spec
+ delete mode 100644 python3
+ create mode 100644 src/retroscrappy/data/icons/retroscrappy.png
+
+diff --git a/.github/workflows/packages.yml b/.github/workflows/packages.yml
+new file mode 100644
+index 0000000..f2a16ec
+--- /dev/null
++++ b/.github/workflows/packages.yml
+@@ -0,0 +1,167 @@
++# Lint and test, build the .deb and .rpm (architecture independent), install
++# them in clean containers, and publish a GitHub release for v* tags.
++name: Packages
++
++on:
++  push:
++    branches: [main]
++    tags: ["v*"]
++  pull_request:
++  workflow_dispatch:
++
++permissions:
++  contents: read
++
++env:
++  PACKAGE_MAINTAINER: ${{ vars.PACKAGE_MAINTAINER || 'RetroboxProject <retroboxproject@users.noreply.github.com>' }}
++
++jobs:
++  check:
++    name: Lint and tests
++    runs-on: ubuntu-24.04
++    steps:
++      - uses: actions/checkout@v4
++
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.12"
++
++      - name: Qt runtime libraries
++        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
++
++      - name: Install
++        run: pip install -e '.[gui,dev]'
++
++      - name: Tag matches __version__
++        if: startsWith(github.ref, 'refs/tags/v')
++        run: |
++          version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/retroscrappy/__init__.py)"
++          if [[ "${GITHUB_REF_NAME#v}" != "${version}" ]]; then
++            echo "::error::Tag ${GITHUB_REF_NAME} does not match __version__ ${version}"
++            exit 1
++          fi
++
++      - name: pylint
++        run: pylint src/retroscrappy tests
++
++      - name: pytest
++        run: QT_QPA_PLATFORM=offscreen pytest -q
++
++      - name: shellcheck
++        run: shellcheck -x install.sh packaging/*.sh packaging/deb/postinst packaging/deb/prerm
++
++  build:
++    name: Build packages
++    needs: check
++    runs-on: ubuntu-24.04
++    steps:
++      - uses: actions/checkout@v4
++
++      - name: Packaging tools
++        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends rpm
++
++      - name: Build .deb
++        run: packaging/build-deb.sh
++
++      - name: Build .rpm
++        run: packaging/build-rpm.sh
++
++      - uses: actions/upload-artifact@v4
++        with:
++          name: packages
++          path: dist/*
++          if-no-files-found: error
++
++  test-deb:
++    name: Install on ${{ matrix.image }}
++    needs: build
++    runs-on: ubuntu-24.04
++    strategy:
++      fail-fast: false
++      matrix:
++        include:
++          - image: debian:trixie
++            required: true
++          # PySide6 is only packaged in Ubuntu releases newer than 24.04.
++          - image: ubuntu:rolling
++            required: false
++    container: ${{ matrix.image }}
++    continue-on-error: ${{ !matrix.required }}
++    steps:
++      - uses: actions/download-artifact@v4
++        with:
++          name: packages
++          path: dist
++
++      - name: Install with apt
++        env:
++          DEBIAN_FRONTEND: noninteractive
++        run: |
++          apt-get update
++          apt-get install -y --no-install-recommends ./dist/*.deb
++
++      - name: Smoke test
++        run: |
++          retroscrappy --version
++          QT_QPA_PLATFORM=offscreen PYTHONPATH=/opt/retroscrappy/lib python3 -c \
++            "from PySide6.QtWidgets import QApplication; app = QApplication([]); \
++            from retroscrappy.gui.main_window import MainWindow; MainWindow()"
++          test -f /usr/share/applications/io.github.retroboxproject.retroscrappy.desktop
++          test -f /usr/share/icons/hicolor/scalable/apps/io.github.retroboxproject.retroscrappy.svg
++
++      - name: Remove cleanly
++        run: |
++          apt-get remove -y retroscrappy
++          test ! -e /opt/retroscrappy
++
++  test-rpm:
++    name: Install on fedora:latest
++    needs: build
++    runs-on: ubuntu-24.04
++    container: fedora:latest
++    steps:
++      - uses: actions/download-artifact@v4
++        with:
++          name: packages
++          path: dist
++
++      - name: Install with dnf
++        run: dnf install -y --setopt=install_weak_deps=False ./dist/*.rpm
++
++      - name: Smoke test
++        run: |
++          retroscrappy --version
++          QT_QPA_PLATFORM=offscreen PYTHONPATH=/opt/retroscrappy/lib python3 -c \
++            "from PySide6.QtWidgets import QApplication; app = QApplication([]); \
++            from retroscrappy.gui.main_window import MainWindow; MainWindow()"
++          test -f /usr/share/applications/io.github.retroboxproject.retroscrappy.desktop
++
++      - name: Remove cleanly
++        run: |
++          dnf remove -y retroscrappy
++          test ! -e /opt/retroscrappy
++
++  release:
++    name: GitHub release
++    if: startsWith(github.ref, 'refs/tags/v')
++    needs: [test-deb, test-rpm]
++    runs-on: ubuntu-24.04
++    permissions:
++      contents: write
++    steps:
++      - uses: actions/download-artifact@v4
++        with:
++          name: packages
++          path: dist
++
++      - name: Checksums
++        working-directory: dist
++        run: sha256sum ./*.deb ./*.rpm | sed 's| \./| |' > SHA256SUMS
++
++      - uses: softprops/action-gh-release@v2
++        with:
++          files: |
++            dist/*.deb
++            dist/*.rpm
++            dist/SHA256SUMS
++          generate_release_notes: true
+diff --git a/.gitignore b/.gitignore
+index b3ec7d5..bf5ccc3 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -218,3 +218,6 @@ __marimo__/
+ 
+ # Streamlit
+ .streamlit/secrets.toml
++
++# RPM spec of this project (the *.spec rule above is for PyInstaller)
++!packaging/rpm/*.spec
+diff --git a/LICENSE b/LICENSE
+new file mode 100644
+index 0000000..f288702
+--- /dev/null
++++ b/LICENSE
+@@ -0,0 +1,674 @@
++                    GNU GENERAL PUBLIC LICENSE
++                       Version 3, 29 June 2007
++
++ Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
++ Everyone is permitted to copy and distribute verbatim copies
++ of this license document, but changing it is not allowed.
++
++                            Preamble
++
++  The GNU General Public License is a free, copyleft license for
++software and other kinds of works.
++
++  The licenses for most software and other practical works are designed
++to take away your freedom to share and change the works.  By contrast,
++the GNU General Public License is intended to guarantee your freedom to
++share and change all versions of a program--to make sure it remains free
++software for all its users.  We, the Free Software Foundation, use the
++GNU General Public License for most of our software; it applies also to
++any other work released this way by its authors.  You can apply it to
++your programs, too.
++
++  When we speak of free software, we are referring to freedom, not
++price.  Our General Public Licenses are designed to make sure that you
++have the freedom to distribute copies of free software (and charge for
++them if you wish), that you receive source code or can get it if you
++want it, that you can change the software or use pieces of it in new
++free programs, and that you know you can do these things.
++
++  To protect your rights, we need to prevent others from denying you
++these rights or asking you to surrender the rights.  Therefore, you have
++certain responsibilities if you distribute copies of the software, or if
++you modify it: responsibilities to respect the freedom of others.
++
++  For example, if you distribute copies of such a program, whether
++gratis or for a fee, you must pass on to the recipients the same
++freedoms that you received.  You must make sure that they, too, receive
++or can get the source code.  And you must show them these terms so they
++know their rights.
++
++  Developers that use the GNU GPL protect your rights with two steps:
++(1) assert copyright on the software, and (2) offer you this License
++giving you legal permission to copy, distribute and/or modify it.
++
++  For the developers' and authors' protection, the GPL clearly explains
++that there is no warranty for this free software.  For both users' and
++authors' sake, the GPL requires that modified versions be marked as
++changed, so that their problems will not be attributed erroneously to
++authors of previous versions.
++
++  Some devices are designed to deny users access to install or run
++modified versions of the software inside them, although the manufacturer
++can do so.  This is fundamentally incompatible with the aim of
++protecting users' freedom to change the software.  The systematic
++pattern of such abuse occurs in the area of products for individuals to
++use, which is precisely where it is most unacceptable.  Therefore, we
++have designed this version of the GPL to prohibit the practice for those
++products.  If such problems arise substantially in other domains, we
++stand ready to extend this provision to those domains in future versions
++of the GPL, as needed to protect the freedom of users.
++
++  Finally, every program is threatened constantly by software patents.
++States should not allow patents to restrict development and use of
++software on general-purpose computers, but in those that do, we wish to
++avoid the special danger that patents applied to a free program could
++make it effectively proprietary.  To prevent this, the GPL assures that
++patents cannot be used to render the program non-free.
++
++  The precise terms and conditions for copying, distribution and
++modification follow.
++
++                       TERMS AND CONDITIONS
++
++  0. Definitions.
++
++  "This License" refers to version 3 of the GNU General Public License.
++
++  "Copyright" also means copyright-like laws that apply to other kinds of
++works, such as semiconductor masks.
++
++  "The Program" refers to any copyrightable work licensed under this
++License.  Each licensee is addressed as "you".  "Licensees" and
++"recipients" may be individuals or organizations.
++
++  To "modify" a work means to copy from or adapt all or part of the work
++in a fashion requiring copyright permission, other than the making of an
++exact copy.  The resulting work is called a "modified version" of the
++earlier work or a work "based on" the earlier work.
++
++  A "covered work" means either the unmodified Program or a work based
++on the Program.
++
++  To "propagate" a work means to do anything with it that, without
++permission, would make you directly or secondarily liable for
++infringement under applicable copyright law, except executing it on a
++computer or modifying a private copy.  Propagation includes copying,
++distribution (with or without modification), making available to the
++public, and in some countries other activities as well.
++
++  To "convey" a work means any kind of propagation that enables other
++parties to make or receive copies.  Mere interaction with a user through
++a computer network, with no transfer of a copy, is not conveying.
++
++  An interactive user interface displays "Appropriate Legal Notices"
++to the extent that it includes a convenient and prominently visible
++feature that (1) displays an appropriate copyright notice, and (2)
++tells the user that there is no warranty for the work (except to the
++extent that warranties are provided), that licensees may convey the
++work under this License, and how to view a copy of this License.  If
++the interface presents a list of user commands or options, such as a
++menu, a prominent item in the list meets this criterion.
++
++  1. Source Code.
++
++  The "source code" for a work means the preferred form of the work
++for making modifications to it.  "Object code" means any non-source
++form of a work.
++
++  A "Standard Interface" means an interface that either is an official
++standard defined by a recognized standards body, or, in the case of
++interfaces specified for a particular programming language, one that
++is widely used among developers working in that language.
++
++  The "System Libraries" of an executable work include anything, other
++than the work as a whole, that (a) is included in the normal form of
++packaging a Major Component, but which is not part of that Major
++Component, and (b) serves only to enable use of the work with that
++Major Component, or to implement a Standard Interface for which an
++implementation is available to the public in source code form.  A
++"Major Component", in this context, means a major essential component
++(kernel, window system, and so on) of the specific operating system
++(if any) on which the executable work runs, or a compiler used to
++produce the work, or an object code interpreter used to run it.
++
++  The "Corresponding Source" for a work in object code form means all
++the source code needed to generate, install, and (for an executable
++work) run the object code and to modify the work, including scripts to
++control those activities.  However, it does not include the work's
++System Libraries, or general-purpose tools or generally available free
++programs which are used unmodified in performing those activities but
++which are not part of the work.  For example, Corresponding Source
++includes interface definition files associated with source files for
++the work, and the source code for shared libraries and dynamically
++linked subprograms that the work is specifically designed to require,
++such as by intimate data communication or control flow between those
++subprograms and other parts of the work.
++
++  The Corresponding Source need not include anything that users
++can regenerate automatically from other parts of the Corresponding
++Source.
++
++  The Corresponding Source for a work in source code form is that
++same work.
++
++  2. Basic Permissions.
++
++  All rights granted under this License are granted for the term of
++copyright on the Program, and are irrevocable provided the stated
++conditions are met.  This License explicitly affirms your unlimited
++permission to run the unmodified Program.  The output from running a
++covered work is covered by this License only if the output, given its
++content, constitutes a covered work.  This License acknowledges your
++rights of fair use or other equivalent, as provided by copyright law.
++
++  You may make, run and propagate covered works that you do not
++convey, without conditions so long as your license otherwise remains
++in force.  You may convey covered works to others for the sole purpose
++of having them make modifications exclusively for you, or provide you
++with facilities for running those works, provided that you comply with
++the terms of this License in conveying all material for which you do
++not control copyright.  Those thus making or running the covered works
++for you must do so exclusively on your behalf, under your direction
++and control, on terms that prohibit them from making any copies of
++your copyrighted material outside their relationship with you.
++
++  Conveying under any other circumstances is permitted solely under
++the conditions stated below.  Sublicensing is not allowed; section 10
++makes it unnecessary.
++
++  3. Protecting Users' Legal Rights From Anti-Circumvention Law.
++
++  No covered work shall be deemed part of an effective technological
++measure under any applicable law fulfilling obligations under article
++11 of the WIPO copyright treaty adopted on 20 December 1996, or
++similar laws prohibiting or restricting circumvention of such
++measures.
++
++  When you convey a covered work, you waive any legal power to forbid
++circumvention of technological measures to the extent such circumvention
++is effected by exercising rights under this License with respect to
++the covered work, and you disclaim any intention to limit operation or
++modification of the work as a means of enforcing, against the work's
++users, your or third parties' legal rights to forbid circumvention of
++technological measures.
++
++  4. Conveying Verbatim Copies.
++
++  You may convey verbatim copies of the Program's source code as you
++receive it, in any medium, provided that you conspicuously and
++appropriately publish on each copy an appropriate copyright notice;
++keep intact all notices stating that this License and any
++non-permissive terms added in accord with section 7 apply to the code;
++keep intact all notices of the absence of any warranty; and give all
++recipients a copy of this License along with the Program.
++
++  You may charge any price or no price for each copy that you convey,
++and you may offer support or warranty protection for a fee.
++
++  5. Conveying Modified Source Versions.
++
++  You may convey a work based on the Program, or the modifications to
++produce it from the Program, in the form of source code under the
++terms of section 4, provided that you also meet all of these conditions:
++
++    a) The work must carry prominent notices stating that you modified
++    it, and giving a relevant date.
++
++    b) The work must carry prominent notices stating that it is
++    released under this License and any conditions added under section
++    7.  This requirement modifies the requirement in section 4 to
++    "keep intact all notices".
++
++    c) You must license the entire work, as a whole, under this
++    License to anyone who comes into possession of a copy.  This
++    License will therefore apply, along with any applicable section 7
++    additional terms, to the whole of the work, and all its parts,
++    regardless of how they are packaged.  This License gives no
++    permission to license the work in any other way, but it does not
++    invalidate such permission if you have separately received it.
++
++    d) If the work has interactive user interfaces, each must display
++    Appropriate Legal Notices; however, if the Program has interactive
++    interfaces that do not display Appropriate Legal Notices, your
++    work need not make them do so.
++
++  A compilation of a covered work with other separate and independent
++works, which are not by their nature extensions of the covered work,
++and which are not combined with it such as to form a larger program,
++in or on a volume of a storage or distribution medium, is called an
++"aggregate" if the compilation and its resulting copyright are not
++used to limit the access or legal rights of the compilation's users
++beyond what the individual works permit.  Inclusion of a covered work
++in an aggregate does not cause this License to apply to the other
++parts of the aggregate.
++
++  6. Conveying Non-Source Forms.
++
++  You may convey a covered work in object code form under the terms
++of sections 4 and 5, provided that you also convey the
++machine-readable Corresponding Source under the terms of this License,
++in one of these ways:
++
++    a) Convey the object code in, or embodied in, a physical product
++    (including a physical distribution medium), accompanied by the
++    Corresponding Source fixed on a durable physical medium
++    customarily used for software interchange.
++
++    b) Convey the object code in, or embodied in, a physical product
++    (including a physical distribution medium), accompanied by a
++    written offer, valid for at least three years and valid for as
++    long as you offer spare parts or customer support for that product
++    model, to give anyone who possesses the object code either (1) a
++    copy of the Corresponding Source for all the software in the
++    product that is covered by this License, on a durable physical
++    medium customarily used for software interchange, for a price no
++    more than your reasonable cost of physically performing this
++    conveying of source, or (2) access to copy the
++    Corresponding Source from a network server at no charge.
++
++    c) Convey individual copies of the object code with a copy of the
++    written offer to provide the Corresponding Source.  This
++    alternative is allowed only occasionally and noncommercially, and
++    only if you received the object code with such an offer, in accord
++    with subsection 6b.
++
++    d) Convey the object code by offering access from a designated
++    place (gratis or for a charge), and offer equivalent access to the
++    Corresponding Source in the same way through the same place at no
++    further charge.  You need not require recipients to copy the
++    Corresponding Source along with the object code.  If the place to
++    copy the object code is a network server, the Corresponding Source
++    may be on a different server (operated by you or a third party)
++    that supports equivalent copying facilities, provided you maintain
++    clear directions next to the object code saying where to find the
++    Corresponding Source.  Regardless of what server hosts the
++    Corresponding Source, you remain obligated to ensure that it is
++    available for as long as needed to satisfy these requirements.
++
++    e) Convey the object code using peer-to-peer transmission, provided
++    you inform other peers where the object code and Corresponding
++    Source of the work are being offered to the general public at no
++    charge under subsection 6d.
++
++  A separable portion of the object code, whose source code is excluded
++from the Corresponding Source as a System Library, need not be
++included in conveying the object code work.
++
++  A "User Product" is either (1) a "consumer product", which means any
++tangible personal property which is normally used for personal, family,
++or household purposes, or (2) anything designed or sold for incorporation
++into a dwelling.  In determining whether a product is a consumer product,
++doubtful cases shall be resolved in favor of coverage.  For a particular
++product received by a particular user, "normally used" refers to a
++typical or common use of that class of product, regardless of the status
++of the particular user or of the way in which the particular user
++actually uses, or expects or is expected to use, the product.  A product
++is a consumer product regardless of whether the product has substantial
++commercial, industrial or non-consumer uses, unless such uses represent
++the only significant mode of use of the product.
++
++  "Installation Information" for a User Product means any methods,
++procedures, authorization keys, or other information required to install
++and execute modified versions of a covered work in that User Product from
++a modified version of its Corresponding Source.  The information must
++suffice to ensure that the continued functioning of the modified object
++code is in no case prevented or interfered with solely because
++modification has been made.
++
++  If you convey an object code work under this section in, or with, or
++specifically for use in, a User Product, and the conveying occurs as
++part of a transaction in which the right of possession and use of the
++User Product is transferred to the recipient in perpetuity or for a
++fixed term (regardless of how the transaction is characterized), the
++Corresponding Source conveyed under this section must be accompanied
++by the Installation Information.  But this requirement does not apply
++if neither you nor any third party retains the ability to install
++modified object code on the User Product (for example, the work has
++been installed in ROM).
++
++  The requirement to provide Installation Information does not include a
++requirement to continue to provide support service, warranty, or updates
++for a work that has been modified or installed by the recipient, or for
++the User Product in which it has been modified or installed.  Access to a
++network may be denied when the modification itself materially and
++adversely affects the operation of the network or violates the rules and
++protocols for communication across the network.
++
++  Corresponding Source conveyed, and Installation Information provided,
++in accord with this section must be in a format that is publicly
++documented (and with an implementation available to the public in
++source code form), and must require no special password or key for
++unpacking, reading or copying.
++
++  7. Additional Terms.
++
++  "Additional permissions" are terms that supplement the terms of this
++License by making exceptions from one or more of its conditions.
++Additional permissions that are applicable to the entire Program shall
++be treated as though they were included in this License, to the extent
++that they are valid under applicable law.  If additional permissions
++apply only to part of the Program, that part may be used separately
++under those permissions, but the entire Program remains governed by
++this License without regard to the additional permissions.
++
++  When you convey a copy of a covered work, you may at your option
++remove any additional permissions from that copy, or from any part of
++it.  (Additional permissions may be written to require their own
++removal in certain cases when you modify the work.)  You may place
++additional permissions on material, added by you to a covered work,
++for which you have or can give appropriate copyright permission.
++
++  Notwithstanding any other provision of this License, for material you
++add to a covered work, you may (if authorized by the copyright holders of
++that material) supplement the terms of this License with terms:
++
++    a) Disclaiming warranty or limiting liability differently from the
++    terms of sections 15 and 16 of this License; or
++
++    b) Requiring preservation of specified reasonable legal notices or
++    author attributions in that material or in the Appropriate Legal
++    Notices displayed by works containing it; or
++
++    c) Prohibiting misrepresentation of the origin of that material, or
++    requiring that modified versions of such material be marked in
++    reasonable ways as different from the original version; or
++
++    d) Limiting the use for publicity purposes of names of licensors or
++    authors of the material; or
++
++    e) Declining to grant rights under trademark law for use of some
++    trade names, trademarks, or service marks; or
++
++    f) Requiring indemnification of licensors and authors of that
++    material by anyone who conveys the material (or modified versions of
++    it) with contractual assumptions of liability to the recipient, for
++    any liability that these contractual assumptions directly impose on
++    those licensors and authors.
++
++  All other non-permissive additional terms are considered "further
++restrictions" within the meaning of section 10.  If the Program as you
++received it, or any part of it, contains a notice stating that it is
++governed by this License along with a term that is a further
++restriction, you may remove that term.  If a license document contains
++a further restriction but permits relicensing or conveying under this
++License, you may add to a covered work material governed by the terms
++of that license document, provided that the further restriction does
++not survive such relicensing or conveying.
++
++  If you add terms to a covered work in accord with this section, you
++must place, in the relevant source files, a statement of the
++additional terms that apply to those files, or a notice indicating
++where to find the applicable terms.
++
++  Additional terms, permissive or non-permissive, may be stated in the
++form of a separately written license, or stated as exceptions;
++the above requirements apply either way.
++
++  8. Termination.
++
++  You may not propagate or modify a covered work except as expressly
++provided under this License.  Any attempt otherwise to propagate or
++modify it is void, and will automatically terminate your rights under
++this License (including any patent licenses granted under the third
++paragraph of section 11).
++
++  However, if you cease all violation of this License, then your
++license from a particular copyright holder is reinstated (a)
++provisionally, unless and until the copyright holder explicitly and
++finally terminates your license, and (b) permanently, if the copyright
++holder fails to notify you of the violation by some reasonable means
++prior to 60 days after the cessation.
++
++  Moreover, your license from a particular copyright holder is
++reinstated permanently if the copyright holder notifies you of the
++violation by some reasonable means, this is the first time you have
++received notice of violation of this License (for any work) from that
++copyright holder, and you cure the violation prior to 30 days after
++your receipt of the notice.
++
++  Termination of your rights under this section does not terminate the
++licenses of parties who have received copies or rights from you under
++this License.  If your rights have been terminated and not permanently
++reinstated, you do not qualify to receive new licenses for the same
++material under section 10.
++
++  9. Acceptance Not Required for Having Copies.
++
++  You are not required to accept this License in order to receive or
++run a copy of the Program.  Ancillary propagation of a covered work
++occurring solely as a consequence of using peer-to-peer transmission
++to receive a copy likewise does not require acceptance.  However,
++nothing other than this License grants you permission to propagate or
++modify any covered work.  These actions infringe copyright if you do
++not accept this License.  Therefore, by modifying or propagating a
++covered work, you indicate your acceptance of this License to do so.
++
++  10. Automatic Licensing of Downstream Recipients.
++
++  Each time you convey a covered work, the recipient automatically
++receives a license from the original licensors, to run, modify and
++propagate that work, subject to this License.  You are not responsible
++for enforcing compliance by third parties with this License.
++
++  An "entity transaction" is a transaction transferring control of an
++organization, or substantially all assets of one, or subdividing an
++organization, or merging organizations.  If propagation of a covered
++work results from an entity transaction, each party to that
++transaction who receives a copy of the work also receives whatever
++licenses to the work the party's predecessor in interest had or could
++give under the previous paragraph, plus a right to possession of the
++Corresponding Source of the work from the predecessor in interest, if
++the predecessor has it or can get it with reasonable efforts.
++
++  You may not impose any further restrictions on the exercise of the
++rights granted or affirmed under this License.  For example, you may
++not impose a license fee, royalty, or other charge for exercise of
++rights granted under this License, and you may not initiate litigation
++(including a cross-claim or counterclaim in a lawsuit) alleging that
++any patent claim is infringed by making, using, selling, offering for
++sale, or importing the Program or any portion of it.
++
++  11. Patents.
++
++  A "contributor" is a copyright holder who authorizes use under this
++License of the Program or a work on which the Program is based.  The
++work thus licensed is called the contributor's "contributor version".
++
++  A contributor's "essential patent claims" are all patent claims
++owned or controlled by the contributor, whether already acquired or
++hereafter acquired, that would be infringed by some manner, permitted
++by this License, of making, using, or selling its contributor version,
++but do not include claims that would be infringed only as a
++consequence of further modification of the contributor version.  For
++purposes of this definition, "control" includes the right to grant
++patent sublicenses in a manner consistent with the requirements of
++this License.
++
++  Each contributor grants you a non-exclusive, worldwide, royalty-free
++patent license under the contributor's essential patent claims, to
++make, use, sell, offer for sale, import and otherwise run, modify and
++propagate the contents of its contributor version.
++
++  In the following three paragraphs, a "patent license" is any express
++agreement or commitment, however denominated, not to enforce a patent
++(such as an express permission to practice a patent or covenant not to
++sue for patent infringement).  To "grant" such a patent license to a
++party means to make such an agreement or commitment not to enforce a
++patent against the party.
++
++  If you convey a covered work, knowingly relying on a patent license,
++and the Corresponding Source of the work is not available for anyone
++to copy, free of charge and under the terms of this License, through a
++publicly available network server or other readily accessible means,
++then you must either (1) cause the Corresponding Source to be so
++available, or (2) arrange to deprive yourself of the benefit of the
++patent license for this particular work, or (3) arrange, in a manner
++consistent with the requirements of this License, to extend the patent
++license to downstream recipients.  "Knowingly relying" means you have
++actual knowledge that, but for the patent license, your conveying the
++covered work in a country, or your recipient's use of the covered work
++in a country, would infringe one or more identifiable patents in that
++country that you have reason to believe are valid.
++
++  If, pursuant to or in connection with a single transaction or
++arrangement, you convey, or propagate by procuring conveyance of, a
++covered work, and grant a patent license to some of the parties
++receiving the covered work authorizing them to use, propagate, modify
++or convey a specific copy of the covered work, then the patent license
++you grant is automatically extended to all recipients of the covered
++work and works based on it.
++
++  A patent license is "discriminatory" if it does not include within
++the scope of its coverage, prohibits the exercise of, or is
++conditioned on the non-exercise of one or more of the rights that are
++specifically granted under this License.  You may not convey a covered
++work if you are a party to an arrangement with a third party that is
++in the business of distributing software, under which you make payment
++to the third party based on the extent of your activity of conveying
++the work, and under which the third party grants, to any of the
++parties who would receive the covered work from you, a discriminatory
++patent license (a) in connection with copies of the covered work
++conveyed by you (or copies made from those copies), or (b) primarily
++for and in connection with specific products or compilations that
++contain the covered work, unless you entered into that arrangement,
++or that patent license was granted, prior to 28 March 2007.
++
++  Nothing in this License shall be construed as excluding or limiting
++any implied license or other defenses to infringement that may
++otherwise be available to you under applicable patent law.
++
++  12. No Surrender of Others' Freedom.
++
++  If conditions are imposed on you (whether by court order, agreement or
++otherwise) that contradict the conditions of this License, they do not
++excuse you from the conditions of this License.  If you cannot convey a
++covered work so as to satisfy simultaneously your obligations under this
++License and any other pertinent obligations, then as a consequence you may
++not convey it at all.  For example, if you agree to terms that obligate you
++to collect a royalty for further conveying from those to whom you convey
++the Program, the only way you could satisfy both those terms and this
++License would be to refrain entirely from conveying the Program.
++
++  13. Use with the GNU Affero General Public License.
++
++  Notwithstanding any other provision of this License, you have
++permission to link or combine any covered work with a work licensed
++under version 3 of the GNU Affero General Public License into a single
++combined work, and to convey the resulting work.  The terms of this
++License will continue to apply to the part which is the covered work,
++but the special requirements of the GNU Affero General Public License,
++section 13, concerning interaction through a network will apply to the
++combination as such.
++
++  14. Revised Versions of this License.
++
++  The Free Software Foundation may publish revised and/or new versions of
++the GNU General Public License from time to time.  Such new versions will
++be similar in spirit to the present version, but may differ in detail to
++address new problems or concerns.
++
++  Each version is given a distinguishing version number.  If the
++Program specifies that a certain numbered version of the GNU General
++Public License "or any later version" applies to it, you have the
++option of following the terms and conditions either of that numbered
++version or of any later version published by the Free Software
++Foundation.  If the Program does not specify a version number of the
++GNU General Public License, you may choose any version ever published
++by the Free Software Foundation.
++
++  If the Program specifies that a proxy can decide which future
++versions of the GNU General Public License can be used, that proxy's
++public statement of acceptance of a version permanently authorizes you
++to choose that version for the Program.
++
++  Later license versions may give you additional or different
++permissions.  However, no additional obligations are imposed on any
++author or copyright holder as a result of your choosing to follow a
++later version.
++
++  15. Disclaimer of Warranty.
++
++  THERE IS NO WARRANTY FOR THE PROGRAM, TO THE EXTENT PERMITTED BY
++APPLICABLE LAW.  EXCEPT WHEN OTHERWISE STATED IN WRITING THE COPYRIGHT
++HOLDERS AND/OR OTHER PARTIES PROVIDE THE PROGRAM "AS IS" WITHOUT WARRANTY
++OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO,
++THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
++PURPOSE.  THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE PROGRAM
++IS WITH YOU.  SHOULD THE PROGRAM PROVE DEFECTIVE, YOU ASSUME THE COST OF
++ALL NECESSARY SERVICING, REPAIR OR CORRECTION.
++
++  16. Limitation of Liability.
++
++  IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING
++WILL ANY COPYRIGHT HOLDER, OR ANY OTHER PARTY WHO MODIFIES AND/OR CONVEYS
++THE PROGRAM AS PERMITTED ABOVE, BE LIABLE TO YOU FOR DAMAGES, INCLUDING ANY
++GENERAL, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE
++USE OR INABILITY TO USE THE PROGRAM (INCLUDING BUT NOT LIMITED TO LOSS OF
++DATA OR DATA BEING RENDERED INACCURATE OR LOSSES SUSTAINED BY YOU OR THIRD
++PARTIES OR A FAILURE OF THE PROGRAM TO OPERATE WITH ANY OTHER PROGRAMS),
++EVEN IF SUCH HOLDER OR OTHER PARTY HAS BEEN ADVISED OF THE POSSIBILITY OF
++SUCH DAMAGES.
++
++  17. Interpretation of Sections 15 and 16.
++
++  If the disclaimer of warranty and limitation of liability provided
++above cannot be given local legal effect according to their terms,
++reviewing courts shall apply local law that most closely approximates
++an absolute waiver of all civil liability in connection with the
++Program, unless a warranty or assumption of liability accompanies a
++copy of the Program in return for a fee.
++
++                     END OF TERMS AND CONDITIONS
++
++            How to Apply These Terms to Your New Programs
++
++  If you develop a new program, and you want it to be of the greatest
++possible use to the public, the best way to achieve this is to make it
++free software which everyone can redistribute and change under these terms.
++
++  To do so, attach the following notices to the program.  It is safest
++to attach them to the start of each source file to most effectively
++state the exclusion of warranty; and each file should have at least
++the "copyright" line and a pointer to where the full notice is found.
++
++    <one line to give the program's name and a brief idea of what it does.>
++    Copyright (C) <year>  <name of author>
++
++    This program is free software: you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation, either version 3 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program.  If not, see <https://www.gnu.org/licenses/>.
++
++Also add information on how to contact you by electronic and paper mail.
++
++  If the program does terminal interaction, make it output a short
++notice like this when it starts in an interactive mode:
++
++    <program>  Copyright (C) <year>  <name of author>
++    This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
++    This is free software, and you are welcome to redistribute it
++    under certain conditions; type `show c' for details.
++
++The hypothetical commands `show w' and `show c' should show the appropriate
++parts of the General Public License.  Of course, your program's commands
++might be different; for a GUI interface, you would use an "about box".
++
++  You should also get your employer (if you work as a programmer) or school,
++if any, to sign a "copyright disclaimer" for the program, if necessary.
++For more information on this, and how to apply and follow the GNU GPL, see
++<https://www.gnu.org/licenses/>.
++
++  The GNU General Public License does not permit incorporating your program
++into proprietary programs.  If your program is a subroutine library, you
++may consider it more useful to permit linking proprietary applications with
++the library.  If this is what you want to do, use the GNU Lesser General
++Public License instead of this License.  But first, please read
++<https://www.gnu.org/licenses/why-not-lgpl.html>.
+diff --git a/README.md b/README.md
+index 983025b..c818947 100644
+--- a/README.md
++++ b/README.md
+@@ -19,14 +19,28 @@ those frontends expect.
+ 
+ ## Install
+ 
+-Requires Python 3.11+.
++**Debian 13+, Ubuntu 25.04+, Fedora:** download the `.deb` or `.rpm` from
++the [latest release](https://github.com/RetroboxProject/retroscrappy/releases/latest)
++and install it with your package manager (`sudo apt install ./retroscrappy_*_all.deb`
++or `sudo dnf install ./retroscrappy-*.noarch.rpm`). It adds *Retroscrappy*
++to the application menu.
++
++**Immutable systems (Fedora Atomic, SteamOS, Bazzite...) or older
++distributions:** use `install.sh`, which installs into a private virtual
++environment and adds the menu entry. Python 3.11+ is required.
+ 
+ ```bash
+-pip install .            # CLI only
+-pip install '.[gui]'     # CLI + graphical interface
++curl -fsSL https://raw.githubusercontent.com/RetroboxProject/retroscrappy/main/install.sh | bash
++# options: --system (all users, needs sudo), --version vX.Y.Z, --no-gui, --uninstall
+ ```
+ 
+-For development: `pip install -e '.[gui,dev]'`.
++**From source**, for development (Python 3.11+):
++
++```bash
++pip install -e '.[gui,dev]'
++```
++
++See [packaging/README.md](packaging/README.md) for how packages are built.
+ 
+ ## Graphical interface
+ 
+@@ -41,6 +55,8 @@ The window goes from general to specific:
+ 2. **Games** (middle): games of the highlighted system with a ✔ for each
+    piece of data they already have. Filter by name or show only incomplete
+    games. Games in *italics* are on disk but not in `gamelist.xml` yet.
++   Columns can be resized and reordered; widths, panel sizes and the
++   window layout are remembered (`~/.config/retroscrappy/ui.ini`).
+ 3. **Game editor** (right): media and metadata of the selected game.
+    - Click any media box (box art, logo, screenshot, video...) to fetch it
+      from a source, pick a file from your computer, open it or remove it.
+@@ -136,8 +152,12 @@ src/retroscrappy/
+ ├── data/        bundled platform table
+ └── cli.py       command line
+ tests/           pytest suite (no network)
+-packaging/       notes for future deb/rpm/PyPI packages
+-data/            desktop entry
++packaging/       .deb/.rpm build scripts, desktop entry, icon, AppStream data
++install.sh       installer for immutable systems (virtual environment)
+ ```
+ 
+ Code checks: `pylint src/retroscrappy` and `pytest`.
++
++## License
++
++GPL-3.0-only. See [LICENSE](LICENSE).
+diff --git a/install.sh b/install.sh
+new file mode 100755
+index 0000000..d7ecb52
+--- /dev/null
++++ b/install.sh
+@@ -0,0 +1,242 @@
++#!/usr/bin/env bash
++# Install Retroscrappy without the distribution's package manager.
++#
++# Meant for immutable systems (Fedora Atomic, SteamOS, Bazzite...) and any
++# distribution without the .deb/.rpm dependencies. Everything goes into a
++# private Python virtual environment, so the system Python is not touched.
++#
++#   ./install.sh                     install for the current user (~/.local)
++#   sudo ./install.sh --system       install for all users (/opt/retroscrappy)
++#   ./install.sh --version v0.4.0    install a given release
++#   ./install.sh --ref main          install a branch or commit
++#   ./install.sh --no-gui            command line only (skips PySide6)
++#   ./install.sh --uninstall         remove a previous install.sh installation
++#
++# Run it from a clone to install that working tree, or on its own
++# (curl ... | bash -s -- [options]) to download the latest release.
++set -euo pipefail
++
++readonly APP_NAME="retroscrappy"
++readonly APP_ID="io.github.retroboxproject.retroscrappy"
++readonly REPO="RetroboxProject/retroscrappy"
++readonly MIN_PYTHON="3.11"
++readonly MARKER=".installed-by-install-sh"
++
++SCOPE=""
++REF=""
++WITH_GUI=1
++ACTION="install"
++WORK_DIR=""
++SOURCE_DIR=""
++
++log() {
++    local tag="$1"
++    shift
++    printf '%s %s %s\n' "${tag}" "$(date '+%Y-%m-%d_%H:%M:%S')" "$*" >&2
++}
++log_info() { log "[INFO]" "$@"; }
++log_ok() { log "[ OK ]" "$@"; }
++log_warn() { log "[WARN]" "$@"; }
++log_error() { log "[ERR ]" "$@"; }
++
++die() {
++    log_error "$@"
++    exit 1
++}
++
++cleanup() {
++    if [[ -n "${WORK_DIR}" && -d "${WORK_DIR}" ]]; then
++        rm -rf "${WORK_DIR}"
++    fi
++}
++trap cleanup EXIT
++
++usage() {
++    sed -n '2,17s/^# \{0,1\}//p' "${BASH_SOURCE[0]}" 2> /dev/null \
++        || echo "Usage: install.sh [--user|--system] [--version TAG|--ref REF] [--no-gui] [--uninstall]"
++}
++
++parse_args() {
++    while [[ $# -gt 0 ]]; do
++        case "$1" in
++            --user) SCOPE="user" ;;
++            --system) SCOPE="system" ;;
++            --version | --ref)
++                [[ $# -ge 2 ]] || die "$1 needs a value"
++                REF="$2"
++                shift
++                ;;
++            --no-gui) WITH_GUI=0 ;;
++            --uninstall) ACTION="uninstall" ;;
++            -h | --help)
++                usage
++                exit 0
++                ;;
++            *) die "Unknown option: $1 (see --help)" ;;
++        esac
++        shift
++    done
++    if [[ -z "${SCOPE}" ]]; then
++        if [[ "${EUID}" -eq 0 ]]; then SCOPE="system"; else SCOPE="user"; fi
++    fi
++    if [[ "${SCOPE}" == "system" && "${EUID}" -ne 0 ]]; then
++        die "--system needs root (run it with sudo)"
++    fi
++}
++
++set_paths() {
++    if [[ "${SCOPE}" == "system" ]]; then
++        PREFIX="/opt/${APP_NAME}"
++        BIN_DIR="/usr/local/bin"
++        SHARE_DIR="/usr/local/share"
++    else
++        local data_home="${XDG_DATA_HOME:-${HOME}/.local/share}"
++        PREFIX="${data_home}/${APP_NAME}"
++        BIN_DIR="${HOME}/.local/bin"
++        SHARE_DIR="${data_home}"
++    fi
++    readonly PREFIX BIN_DIR SHARE_DIR
++    readonly MANIFEST="${PREFIX}/${MARKER}"
++}
++
++find_python() {
++    local candidate
++    for candidate in python3 python3.14 python3.13 python3.12 python3.11; do
++        if command -v "${candidate}" > /dev/null 2>&1 \
++            && "${candidate}" -c "import sys; sys.exit(sys.version_info < (${MIN_PYTHON/./, }))" \
++            && "${candidate}" -c "import venv, ensurepip" > /dev/null 2>&1; then
++            command -v "${candidate}"
++            return 0
++        fi
++    done
++    return 1
++}
++
++# Set SOURCE_DIR to a source tree: this clone, or a downloaded archive.
++fetch_source() {
++    local here
++    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2> /dev/null && pwd || true)"
++    if [[ -z "${REF}" && -n "${here}" && -f "${here}/pyproject.toml" \
++        && -d "${here}/src/${APP_NAME}" ]]; then
++        log_info "Installing from the local tree ${here}"
++        SOURCE_DIR="${here}"
++        return 0
++    fi
++    command -v curl > /dev/null || die "curl is needed to download ${APP_NAME}"
++    command -v tar > /dev/null || die "tar is needed to unpack ${APP_NAME}"
++
++    local ref="${REF}" url
++    if [[ -z "${ref}" ]]; then
++        ref="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2> /dev/null \
++            | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1 || true)"
++        if [[ -z "${ref}" ]]; then
++            log_warn "No published release found; using the main branch"
++            ref="main"
++        fi
++    fi
++    url="https://github.com/${REPO}/archive/${ref}.tar.gz"
++    WORK_DIR="$(mktemp -d)"
++    log_info "Downloading ${ref}"
++    curl -fsSL "${url}" | tar -xz -C "${WORK_DIR}" || die "Cannot download ${url}"
++    SOURCE_DIR="$(find "${WORK_DIR}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
++    [[ -f "${SOURCE_DIR}/pyproject.toml" ]] || die "Unexpected archive layout in ${url}"
++}
++
++record() {
++    printf '%s\n' "$1" >> "${MANIFEST}"
++}
++
++install_desktop_files() {
++    local src="$1" apps="${SHARE_DIR}/applications" icons="${SHARE_DIR}/icons/hicolor"
++    mkdir -p "${apps}" "${SHARE_DIR}/metainfo"
++
++    sed "s|^Exec=.*|Exec=${PREFIX}/venv/bin/${APP_NAME}-gui|" \
++        "${src}/packaging/linux/${APP_ID}.desktop" > "${apps}/${APP_ID}.desktop"
++    record "${apps}/${APP_ID}.desktop"
++    install -m 0644 "${src}/packaging/linux/${APP_ID}.metainfo.xml" "${SHARE_DIR}/metainfo/"
++    record "${SHARE_DIR}/metainfo/${APP_ID}.metainfo.xml"
++
++    local icon rel
++    while IFS= read -r -d '' icon; do
++        rel="${icon#"${src}/packaging/linux/icons/hicolor/"}"
++        install -D -m 0644 "${icon}" "${icons}/${rel}"
++        record "${icons}/${rel}"
++    done < <(find "${src}/packaging/linux/icons/hicolor" -type f -print0)
++
++    refresh_desktop_caches
++}
++
++refresh_desktop_caches() {
++    if command -v gtk-update-icon-cache > /dev/null 2>&1; then
++        gtk-update-icon-cache -q -t -f "${SHARE_DIR}/icons/hicolor" 2> /dev/null || true
++    fi
++    if command -v update-desktop-database > /dev/null 2>&1; then
++        update-desktop-database -q "${SHARE_DIR}/applications" 2> /dev/null || true
++    fi
++}
++
++do_install() {
++    if [[ -d "${PREFIX}" && ! -f "${MANIFEST}" ]]; then
++        die "${PREFIX} exists but was not created by install.sh (a .deb/.rpm package?)"
++    fi
++    local python src extra=""
++    python="$(find_python)" \
++        || die "Python >= ${MIN_PYTHON} with the venv module is required (python3-venv on Debian)"
++    fetch_source
++    src="${SOURCE_DIR}"
++    [[ "${WITH_GUI}" -eq 1 ]] && extra="[gui]"
++
++    if [[ -f "${MANIFEST}" ]]; then
++        log_info "Replacing the previous installation in ${PREFIX}"
++        do_uninstall quiet
++    fi
++    mkdir -p "${PREFIX}" "${BIN_DIR}"
++    : > "${MANIFEST}"
++
++    log_info "Creating the virtual environment in ${PREFIX}/venv"
++    "${python}" -m venv "${PREFIX}/venv"
++    log_info "Installing ${APP_NAME}${extra} and its dependencies (this can take a while)"
++    "${PREFIX}/venv/bin/python" -m pip install --quiet --disable-pip-version-check \
++        "${src}${extra}"
++
++    local command
++    for command in "${APP_NAME}" "${APP_NAME}-gui"; do
++        [[ "${WITH_GUI}" -eq 0 && "${command}" == *-gui ]] && continue
++        ln -sf "${PREFIX}/venv/bin/${command}" "${BIN_DIR}/${command}"
++        record "${BIN_DIR}/${command}"
++    done
++    [[ "${WITH_GUI}" -eq 1 ]] && install_desktop_files "${src}"
++
++    log_ok "$("${PREFIX}/venv/bin/${APP_NAME}" --version) installed in ${PREFIX}"
++    case ":${PATH}:" in
++        *":${BIN_DIR}:"*) ;;
++        *) log_warn "${BIN_DIR} is not in your PATH; add it to run '${APP_NAME}' from a terminal" ;;
++    esac
++}
++
++do_uninstall() {
++    local quiet="${1:-}"
++    if [[ ! -f "${MANIFEST}" ]]; then
++        [[ -n "${quiet}" ]] && return 0
++        die "No install.sh installation found in ${PREFIX}"
++    fi
++    local path
++    while IFS= read -r path; do
++        [[ -n "${path}" ]] && rm -f -- "${path}"
++    done < "${MANIFEST}"
++    rm -rf -- "${PREFIX}"
++    refresh_desktop_caches
++    [[ -n "${quiet}" ]] || log_ok "${APP_NAME} removed from ${PREFIX}"
++}
++
++main() {
++    parse_args "$@"
++    set_paths
++    if [[ "${ACTION}" == "uninstall" ]]; then
++        do_uninstall
++    else
++        do_install
++    fi
++}
++
++main "$@"
+diff --git a/packaging/README.md b/packaging/README.md
+index 2503e0f..12e05b2 100644
+--- a/packaging/README.md
++++ b/packaging/README.md
+@@ -1,42 +1,68 @@
+-# Packaging notes
+-
+-Nothing here is built yet; this records how the code is laid out so that
+-`.deb`, `.rpm` and PyPI packages can be added later without code changes.
+-
+-## What the code already guarantees
+-
+-- **Standard `pyproject.toml` (setuptools, `src/` layout).** `python -m build`
+-  produces an sdist and a wheel; both are what PyPI, `pybuild` (Debian) and
+-  `%pyproject_*` macros (Fedora) consume.
+-- **Single version source:** `retroscrappy.__version__`, read by setuptools.
+-- **Two entry points:** `retroscrappy` (CLI, console script) and
+-  `retroscrappy-gui` (GUI script). No code runs from the source tree.
+-- **GUI is optional.** The core and CLI only need `requests`; PySide6 is the
+-  `gui` extra. Distro packages can split accordingly (see below).
+-- **No writes to the install prefix.** Settings go to
+-  `$XDG_CONFIG_HOME/retroscrappy/config.ini` (`%APPDATA%` on Windows), cache
+-  to `$XDG_CACHE_HOME/retroscrappy`. Bundled data (`platforms.toml`) is read
+-  with `importlib.resources`, so it works from wheels and zip imports.
+-- **Desktop integration file** in `data/`, named after the reverse-DNS app id
+-  `io.github.retroboxproject.retroscrappy`, which the GUI also sets with
+-  `QGuiApplication.setDesktopFileName`.
+-
+-## Suggested package split
+-
+-| Package | Contents | Depends on |
++# Packaging
++
++Retroscrappy is pure Python, so a single architecture-independent package
++(`_all.deb`, `.noarch.rpm`) serves every Debian, Ubuntu and Fedora release
++that ships the dependencies.
++
++## Layout on disk
++
++Both packages install the same files:
++
++| Path | Contents |
++|---|---|
++| `/opt/retroscrappy/lib/retroscrappy/` | Python package (byte-compiled on install) |
++| `/usr/bin/retroscrappy`, `/usr/bin/retroscrappy-gui` | launchers using the system `python3` |
++| `/usr/share/applications/io.github.retroboxproject.retroscrappy.desktop` | menu entry |
++| `/usr/share/icons/hicolor/*/apps/io.github.retroboxproject.retroscrappy.*` | icon (SVG + PNG sizes) |
++| `/usr/share/metainfo/io.github.retroboxproject.retroscrappy.metainfo.xml` | AppStream data |
++
++The code lives in `/opt` rather than in the distribution's Python path
++because Fedora's `site-packages` path includes the Python version; with
++`/opt` one `.rpm` keeps working across Fedora upgrades.
++
++## Dependencies
++
++| | Debian / Ubuntu | Fedora |
+ |---|---|---|
+-| `retroscrappy` (deb) / `python3-retroscrappy` (rpm) | Python package, `retroscrappy` CLI | `python3 (>= 3.11)`, `python3-requests` |
+-| `retroscrappy-gui` | `retroscrappy-gui`, `.desktop` file, icon | `retroscrappy`, PySide6 (`python3-pyside6.qtwidgets` on Debian, `python3-pyside6` on Fedora) |
++| Required | `python3 (>= 3.11)`, `python3-requests`, `python3-pyside6.qtcore`, `python3-pyside6.qtgui`, `python3-pyside6.qtwidgets` | `python3 >= 3.11`, `python3-requests`, `python3-pyside6` |
++| Recommended | `qt6-wayland` | `qt6-qtwayland` |
++
++PySide6 is packaged in Debian 13 (trixie) and later, Ubuntu after 24.04 and
++current Fedora. On older releases, or on immutable systems, use
++[`install.sh`](../install.sh) instead.
++
++## Building locally
++
++```bash
++packaging/build-deb.sh   # needs dpkg-deb  → dist/retroscrappy_<ver>-1_all.deb
++packaging/build-rpm.sh   # needs rpmbuild  → dist/retroscrappy-<ver>-1.noarch.rpm
++```
++
++`PACKAGE_RELEASE` (default `1`) and `PACKAGE_MAINTAINER` can be set in the
++environment. The version always comes from `src/retroscrappy/__init__.py`.
++
++## Releases (GitHub Actions)
++
++`.github/workflows/packages.yml` runs on every push and pull request:
++
++1. pylint, pytest and shellcheck;
++2. builds the `.deb` and `.rpm`;
++3. installs them with `apt` in `debian:trixie` (and, informatively,
++   `ubuntu:rolling`) and with `dnf` in `fedora:latest`, opens the main
++   window off-screen and uninstalls them again.
++
++Pushing a tag `vX.Y.Z` that matches `__version__` also publishes a GitHub
++release with both packages and a `SHA256SUMS` file. The maintainer field
++can be changed with the repository variable `PACKAGE_MAINTAINER`.
++
++## Icon
+ 
+-PyPI: a single distribution, `pip install retroscrappy` (CLI) or
+-`pip install 'retroscrappy[gui]'`.
++The master is `linux/icons/hicolor/scalable/apps/io.github.retroboxproject.retroscrappy.svg`.
++After editing it, run `packaging/render-icons.sh` (needs `rsvg-convert`) to
++regenerate the PNG sizes and the copy bundled in the Python package, which
++the window uses when the theme icon is not installed.
+ 
+-## Still to do when packaging starts
++## PyPI
+ 
+-- Add a `LICENSE` file and the `license` field in `pyproject.toml`.
+-- Add an application icon (`data/icons/hicolor/...`) and an AppStream
+-  `metainfo.xml`.
+-- `debian/` directory (dh-python + pybuild-plugin-pyproject) and an RPM
+-  `.spec` using `%pyproject_wheel` / `%pyproject_install`, plus a GitHub
+-  Actions workflow like the other RetroboxProject repos.
+-- Compile Qt translations (`.ts` → `.qm`) at build time once translations exist.
++`pyproject.toml` is complete (`python -m build` gives an sdist and a wheel);
++the wheel includes the platform table and the window icon.
+diff --git a/packaging/build-deb.sh b/packaging/build-deb.sh
+new file mode 100755
+index 0000000..bde2a40
+--- /dev/null
++++ b/packaging/build-deb.sh
+@@ -0,0 +1,38 @@
++#!/usr/bin/env bash
++# Build dist/retroscrappy_<version>-<release>_all.deb with dpkg-deb.
++# Environment: PACKAGE_RELEASE (default 1), PACKAGE_MAINTAINER.
++set -euo pipefail
++# shellcheck source=packaging/common.sh
++source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
++
++main() {
++    command -v dpkg-deb > /dev/null || die "dpkg-deb not found"
++    local version release root
++    version="$(package_version)"
++    release="${PACKAGE_RELEASE:-1}"
++    root="${BUILD_DIR}/deb/${APP_NAME}_${version}-${release}_all"
++
++    stage_tree
++    rm -rf "${root}"
++    mkdir -p "${root}/DEBIAN" "${root}/usr/share/doc/${APP_NAME}"
++    cp -a "${STAGE_DIR}/." "${root}/"
++
++    sed -e "s|@VERSION@|${version}-${release}|" \
++        -e "s|@MAINTAINER@|${PACKAGE_MAINTAINER:-${DEFAULT_MAINTAINER}}|" \
++        -e "s|@INSTALLED_SIZE@|$(du -sk --exclude=DEBIAN "${root}" | cut -f1)|" \
++        "${REPO_ROOT}/packaging/deb/control.in" > "${root}/DEBIAN/control"
++    install -m 0755 "${REPO_ROOT}/packaging/deb/postinst" "${root}/DEBIAN/postinst"
++    install -m 0755 "${REPO_ROOT}/packaging/deb/prerm" "${root}/DEBIAN/prerm"
++    install -m 0644 "${REPO_ROOT}/packaging/deb/copyright" \
++        "${root}/usr/share/doc/${APP_NAME}/copyright"
++
++    (cd "${root}" && find . -path ./DEBIAN -prune -o -type f -printf '%P\0' \
++        | sort -z | xargs -0 md5sum > DEBIAN/md5sums)
++    chmod 0644 "${root}/DEBIAN/md5sums"
++
++    mkdir -p "${DIST_DIR}"
++    dpkg-deb --root-owner-group -Zxz --build "${root}" "${DIST_DIR}/" > /dev/null
++    log_ok "Built ${DIST_DIR}/${APP_NAME}_${version}-${release}_all.deb"
++}
++
++main "$@"
+diff --git a/packaging/build-rpm.sh b/packaging/build-rpm.sh
+new file mode 100755
+index 0000000..0bcb214
+--- /dev/null
++++ b/packaging/build-rpm.sh
+@@ -0,0 +1,33 @@
++#!/usr/bin/env bash
++# Build dist/retroscrappy-<version>-<release>.noarch.rpm with rpmbuild.
++# Environment: PACKAGE_RELEASE (default 1), PACKAGE_MAINTAINER.
++set -euo pipefail
++# shellcheck source=packaging/common.sh
++source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
++
++main() {
++    command -v rpmbuild > /dev/null || die "rpmbuild not found"
++    local version release topdir
++    version="$(package_version)"
++    release="${PACKAGE_RELEASE:-1}"
++    topdir="${BUILD_DIR}/rpm"
++
++    stage_tree
++    rm -rf "${topdir}"
++    mkdir -p "${topdir}"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
++
++    rpmbuild -bb --quiet \
++        --define "_topdir ${topdir}" \
++        --define "pkg_version ${version}" \
++        --define "pkg_release ${release}" \
++        --define "pkg_packager ${PACKAGE_MAINTAINER:-${DEFAULT_MAINTAINER}}" \
++        --define "stage_dir ${STAGE_DIR}" \
++        --define "license_file ${REPO_ROOT}/LICENSE" \
++        "${REPO_ROOT}/packaging/rpm/${APP_NAME}.spec"
++
++    mkdir -p "${DIST_DIR}"
++    find "${topdir}/RPMS" -name '*.rpm' -exec cp {} "${DIST_DIR}/" \;
++    log_ok "Built ${DIST_DIR}/${APP_NAME}-${version}-${release}.noarch.rpm"
++}
++
++main "$@"
+diff --git a/packaging/common.sh b/packaging/common.sh
+new file mode 100644
+index 0000000..06798c1
+--- /dev/null
++++ b/packaging/common.sh
+@@ -0,0 +1,77 @@
++#!/usr/bin/env bash
++# Shared helpers for the packaging scripts. Source it; do not run it.
++#
++# Package layout (same for .deb and .rpm):
++#   /opt/retroscrappy/lib/retroscrappy/   Python package
++#   /usr/bin/retroscrappy[-gui]           launchers (system python3)
++#   /usr/share/applications|icons|metainfo desktop integration
++
++readonly APP_NAME="retroscrappy"
++readonly APP_ID="io.github.retroboxproject.retroscrappy"
++readonly INSTALL_PREFIX="/opt/${APP_NAME}"
++REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++readonly REPO_ROOT
++readonly BUILD_DIR="${REPO_ROOT}/build"
++readonly STAGE_DIR="${BUILD_DIR}/stage"
++# shellcheck disable=SC2034  # used by the scripts that source this file
++readonly DIST_DIR="${REPO_ROOT}/dist"
++# shellcheck disable=SC2034
++readonly DEFAULT_MAINTAINER="RetroboxProject <retroboxproject@users.noreply.github.com>"
++
++log() {
++    local tag="$1"
++    shift
++    printf '%s %s %s\n' "${tag}" "$(date '+%Y-%m-%d_%H:%M:%S')" "$*" >&2
++}
++log_info() { log "[INFO]" "$@"; }
++log_ok() { log "[ OK ]" "$@"; }
++log_error() { log "[ERR ]" "$@"; }
++
++die() {
++    log_error "$@"
++    exit 1
++}
++
++# Version from src/retroscrappy/__init__.py (single source of truth).
++package_version() {
++    local version
++    version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' "${REPO_ROOT}/src/${APP_NAME}/__init__.py")"
++    [[ -n "${version}" ]] || die "Cannot read __version__"
++    printf '%s\n' "${version}"
++}
++
++# Write a launcher that runs a module with the system interpreter.
++write_launcher() {
++    local dest="$1" module="$2"
++    cat > "${dest}" <<LAUNCHER
++#!/bin/sh
++# Launcher installed by the ${APP_NAME} package.
++PYTHONPATH="${INSTALL_PREFIX}/lib\${PYTHONPATH:+:\${PYTHONPATH}}"
++export PYTHONPATH
++exec /usr/bin/python3 -m ${module} "\$@"
++LAUNCHER
++    chmod 0755 "${dest}"
++}
++
++# Build the file tree shared by both package formats in ${STAGE_DIR}.
++stage_tree() {
++    rm -rf "${STAGE_DIR}"
++    local lib="${STAGE_DIR}${INSTALL_PREFIX}/lib"
++    local share="${STAGE_DIR}/usr/share"
++    mkdir -p "${lib}" "${STAGE_DIR}/usr/bin" "${share}/applications" "${share}/metainfo"
++
++    cp -r "${REPO_ROOT}/src/${APP_NAME}" "${lib}/"
++    find "${lib}" -name '__pycache__' -type d -prune -exec rm -rf {} +
++    find "${lib}" -type f -name '*.py[co]' -delete
++
++    write_launcher "${STAGE_DIR}/usr/bin/${APP_NAME}" "${APP_NAME}"
++    write_launcher "${STAGE_DIR}/usr/bin/${APP_NAME}-gui" "${APP_NAME}.gui.app"
++
++    install -m 0644 "${REPO_ROOT}/packaging/linux/${APP_ID}.desktop" "${share}/applications/"
++    install -m 0644 "${REPO_ROOT}/packaging/linux/${APP_ID}.metainfo.xml" "${share}/metainfo/"
++    cp -r "${REPO_ROOT}/packaging/linux/icons" "${share}/"
++
++    find "${STAGE_DIR}" -type d -exec chmod 0755 {} +
++    find "${STAGE_DIR}" -type f ! -path '*/usr/bin/*' -exec chmod 0644 {} +
++    log_ok "Staged files in ${STAGE_DIR}"
++}
+diff --git a/packaging/deb/control.in b/packaging/deb/control.in
+new file mode 100644
+index 0000000..05f8264
+--- /dev/null
++++ b/packaging/deb/control.in
+@@ -0,0 +1,17 @@
++Package: retroscrappy
++Version: @VERSION@
++Architecture: all
++Maintainer: @MAINTAINER@
++Installed-Size: @INSTALLED_SIZE@
++Depends: python3 (>= 3.11), python3-requests, python3-pyside6.qtcore, python3-pyside6.qtgui, python3-pyside6.qtwidgets
++Recommends: qt6-wayland
++Section: games
++Priority: optional
++Homepage: https://github.com/RetroboxProject/retroscrappy
++Description: metadata and artwork scraper for EmulationStation
++ Retroscrappy fills the gamelist.xml files of EmulationStation, as used by
++ Batocera, RetroBat and Retrobox, with descriptions, box art, logos,
++ screenshots and videos from ScreenScraper, SteamGridDB and IGDB.
++ .
++ It provides a Qt graphical interface (retroscrappy-gui) and a command
++ line tool (retroscrappy).
+diff --git a/packaging/deb/copyright b/packaging/deb/copyright
+new file mode 100644
+index 0000000..7416aa7
+--- /dev/null
++++ b/packaging/deb/copyright
+@@ -0,0 +1,18 @@
++Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
++Upstream-Name: retroscrappy
++Source: https://github.com/RetroboxProject/retroscrappy
++
++Files: *
++Copyright: RetroboxProject contributors
++License: GPL-3.0-only
++ This program is free software: you can redistribute it and/or modify
++ it under the terms of the GNU General Public License as published by
++ the Free Software Foundation, version 3.
++ .
++ This program is distributed in the hope that it will be useful,
++ but WITHOUT ANY WARRANTY; without even the implied warranty of
++ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ GNU General Public License for more details.
++ .
++ On Debian systems, the complete text of the GNU General Public License
++ version 3 can be found in "/usr/share/common-licenses/GPL-3".
+diff --git a/packaging/deb/postinst b/packaging/deb/postinst
+new file mode 100644
+index 0000000..c245a90
+--- /dev/null
++++ b/packaging/deb/postinst
+@@ -0,0 +1,9 @@
++#!/bin/sh
++# Byte-compile the Python package installed under /opt/retroscrappy.
++set -e
++
++if [ "$1" = "configure" ]; then
++    python3 -m compileall -q /opt/retroscrappy/lib > /dev/null 2>&1 || true
++fi
++
++exit 0
+diff --git a/packaging/deb/prerm b/packaging/deb/prerm
+new file mode 100644
+index 0000000..99d77e6
+--- /dev/null
++++ b/packaging/deb/prerm
+@@ -0,0 +1,12 @@
++#!/bin/sh
++# Remove the byte-code generated by postinst (not tracked by dpkg).
++set -e
++
++case "$1" in
++    remove | upgrade | deconfigure)
++        find /opt/retroscrappy/lib -type d -name __pycache__ -prune \
++            -exec rm -rf {} + 2> /dev/null || true
++        ;;
++esac
++
++exit 0
+diff --git a/packaging/linux/icons/hicolor/128x128/apps/io.github.retroboxproject.retroscrappy.png b/packaging/linux/icons/hicolor/128x128/apps/io.github.retroboxproject.retroscrappy.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..562c0716de287e677b674c26621d8b02772220ec
+GIT binary patch
+literal 6042
+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
+UIee_mb^rhX07*qoM6N<$g3F!6nE(I)
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/linux/icons/hicolor/16x16/apps/io.github.retroboxproject.retroscrappy.png b/packaging/linux/icons/hicolor/16x16/apps/io.github.retroboxproject.retroscrappy.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..2f5f31ebdea8eb56a5a76d37738cc62c5b95007f
+GIT binary patch
+literal 677
+zcmV;W0$TlvP)<h;3K|Lk000e1NJLTq000mG000mO1^@s6AM^iV00006VoOIv0RI60
+z0RN!9r;`8x0$NE#K~y-6jgm`9lwlNxpY#8}mvOX7vym>?g$g4O#iEd?XwfDLcP*lJ
+z?E;N95d;-opheKaY7^9=Ac+dwSx|<%CM7butgJ;|s>!ittoi@%oEGCanh+iM;QQdb
+z?|a_&JHkvgB|6$f*zSo{@{cm}rp;vFZRY+UfB-br?K^{Us`&noGDOb4OZT3Zro`Sh
+z6@4)mECO4al}#HQ0K@M+Qm=i?=98%D<{*-A$6WC8dgIFRke2oHyN5n_bX^Yk{I#Tm
+zu+vjCq2^F?#3~%OI`gzFQApdo(^~Ji*_o%ZywI!WP&5%J(X7hhcH=_w1mjx0z;q&T
+zT#a4iQ2Q^gJuO8QsFnzJuMm31V))&677&ast!4kw3tU=pjBazqC<zoT+<?V-ADnTd
+ztAhgv_u!{S0C1aEbN6;1*GH$Q%^QlFjiF#+Ca>P%IQjKTbxjQKQ<}1#R6!`Yi0Yac
+z`E1CeHx;P;F5>4;Ff^{<6jO&b*5S6U1wb3?ut5h-864BUCeUb>pl>2g66N88Cw%?(
+zy%fNWj|@D2iEZ1#<1cBnxDZyfFjHy}X-F#bo7BCh5V;ab;8U(4k(K%jzhEvSRdFO9
+zM|__M(2eV0auUL@V9EE8vN9q-8j_fEST>90vYEhH*e|&$lW<!6hUK^l!Pcw-x3aL)
+z0A`ry;e10;H1iG1=gmy}1)#Q}`5aX>C*Am{NGy&7W$2Gdq$*y(=dyS;i?JxgrnC4B
+z%S>`V&!@*<ost;^sfw>|6=N5kpG0-RA_3repl-s1XSwXi5F+*mFWoEAtA9?J00000
+LNkvXXu0mjfPG?4N
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/linux/icons/hicolor/24x24/apps/io.github.retroboxproject.retroscrappy.png b/packaging/linux/icons/hicolor/24x24/apps/io.github.retroboxproject.retroscrappy.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..295eaa264fbcdb15a61a32b8a477d09c6ca7b5ff
+GIT binary patch
+literal 1129
+zcmV-v1eW`WP)<h;3K|Lk000e1NJLTq000;O000;W1^@s6;CDUv00006VoOIv0RI60
+z0RN!9r;`8x1RhC5K~zYIrIuT4RYeqrznQ&vY3b#(rQk_{QjWGo4G5+tkT$7^g<wNb
+zf=?zURud5(NK8zO5n_BW#s{L@^g(^|MQk+0TjY|EG}H%-5fZ4y7Fwifv3JgC>)A82
+zeAvC5UQ!^gWF>pAnf<Tz|7%TVE9O{LNn@#Ry@b;)d+yp|rk$QJp6&dz|8!4gTunVx
+zF59(Ei#nl%XC4H2jtNSg7p?cV^?%zwouDeeu}XQa6)5^2;F&gvbz9o*{@CsVh-Xg9
+zJ-~}%LTOw8=;>7qji|-87vpgPs8>}b^`*{ue`m@yWlF)08q2GD3>zvPYI27NTyEEV
+z-W>4DMUBXUNhAz(sd~7mzD9{^nY)^u1t0AX*}26ns>Kf%J>LG*XCl2o1|_w=5(%8l
+z22lz=e8sYJy@TYU_%v)V_^&w*ob=`~(WpQh41$~Gjn$Th#~q}&FW<4w(eR|5hhs2A
+zO=dQO*K36BD?Vc=C|<mLpfTCPq1#8<S0kMMZEiCZJ{X+L^mk=UQI!jQK`~3;cz<zp
+z->3PVeMtNuhm)TW&lh?|GbB=iZvd6SpsYYaQh^aHhT6I(SiL3=Kw&ZjU^p)T;8s^J
+zEgu}G`RIEbPJYaq0^#=P3=1>GKr$v&I}NGm-5SGNhhC;2mIpxa)vo}AFKq^3bR@}z
+zrw@X)kOD0ZAyXznW59`>_O4;!NNXNW1h8nW0mwRb4mC7}8X6<(*tw_}tpSUZ=$jkE
+zG7Ad>^QP!VGEGH}LZL8(GqtQLCOCD8;M65#)lBmZAqquB4s<2M`<tTE-5~<lw1G*=
+z;R~CPEI$HmSU)X+NgFiqU6+}M1A1zTW`}?3>!-*G2Fo{JpW)HR64Am`;jNbexOTM@
+zgC)xeKlk-d%9;u9=1&no+A+B~&Cw%YaxZftgktB#4I0e?Cpq$nK703Ii;9ujTHMBs
+zxUw?X-H0uS!M1Ifv_X&sF~Fd$3d79KPftKp8~%%X(edT@b+vfan^1|h_|NY`$5-Gz
+zyA>wcFN9%L7<zeriFHce^d5>Uy=*x;R!CMw71?$5*ugv4E0=MBhwbe_2KsR}#9qCM
+z3q0JdZde(|uYL;C(FT5ijuoP^m*7%&#TWlw1yGn<aTeGH;IFN~{nJZs(*gXl1Zqh(
+z^6z*=$cv^3YXDH$ImpBWrn{5m7sv7ArGy>rQ!O|%oVvbU0p#Z=DwWf%L0NgRxzmSC
+zi~$fNDllE0h>axEvFOrsBSTRF&%<9`PI$9pI$^M~jC4o)AfDSiI@)>N14yTb1`3~R
+zx)5IbJ>kYv<sb?Kl)|NwlV?Fdf!GiULqHJcKx^E1Dtb4e$oSa#rCWD54gB%_6&AWC
+vb92k%+PO!Z<^g|Om~dMEl}g?0&5ZvCXEig-g7n6b00000NkvXXu0mjffsqbe
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/linux/icons/hicolor/256x256/apps/io.github.retroboxproject.retroscrappy.png b/packaging/linux/icons/hicolor/256x256/apps/io.github.retroboxproject.retroscrappy.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..6323cf00893f8a03e42490298f9a4981e046f273
+GIT binary patch
+literal 13281
+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
+JtP(d2{2xIIk<0)9
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/linux/icons/hicolor/32x32/apps/io.github.retroboxproject.retroscrappy.png b/packaging/linux/icons/hicolor/32x32/apps/io.github.retroboxproject.retroscrappy.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..761358c3ff9b2b0d4f7ba147cbd19e31f8cd9c72
+GIT binary patch
+literal 1429
+zcmV;G1#0?<P)<h;3K|Lk000e1NJLTq001BW001Be1^@s6b9#F800006VoOIv0RI60
+z0RN!9r;`8x1xiUoK~z|U#g}VrR7DiWe{=6{-=z=wV4(u`K`25cqFBl!C<O^<z!;GP
+z2r+6zDuEaw#30cS{Ahw&6C-{AHIia{Ce(n2mjxeyA1Fd8g;FS`rAyzt-Me>Y{IG4e
+z+wLw!f}YLICTGt4&;Oh`b7ltqXAwgcQ__~r6;P&Ou7GR}<~=%)z)j#d80F{MzWp^U
+zf%(jLG^dUF5LkCF4o5)g<LtJMjYl|Q!=UKmQ>K<{^g7Vo=kKwuSZ9XYS9@R}0|lu|
+z<{5DG{zg7D5qeHdTV<64KnPW)^{{dnCZ-9cvm^^=OQse`#$;*$nr;cIFB%*=;oz5(
+zCQ^=ofD&auRbK|4Y6Qkcv!C~f;;onb<c`x(aqF%N-uukS@xP2aFwl*)?FVxNKz_<X
+zn<&-(+Ov{PFGvg#-Fd$#EqH&Q$tT}M-9YkE$03IUK%*mCzPL#8#xe=LBk~P^f#%KS
+zHa*>%&wq{xZ36TWP+={KCTg}Wli(e>^TD!hx#aXkIM)!lzKnhX;l3?PB&Lr5fq(It
+z7HnM_9=kv2{v{a3EI$iojf3LCujxw4ysOB~UJn(2Z(?$H4JA362QxL7Z-vi7fPfyp
+z1Pk&6c)>4C5_jyvJa=)#1gxc{tXQ#&iZdIT+*!kdJWX9o_yUfYfr3;93QsBpcKA98
+zC+7DDAwHHhi+1wo;pfOt3GahwML61FfLDOlpcENd$$a|7+oYx?57;>O{Q-b~<;($H
+z`|U1XS-peiv*%HzkAoMoVsykpcL1m`gPtDIM*vU~mn$R0Ie>Acb=bVr^kiIPGibJC
+zV6GRsyTkhkW<U>5&w)z`d~-e)>luMDWU_g(4&k+eAcrrY<DAG@d3_p%4JavixiW=V
+zM=x4;g(VPi8}|4;?4Io>#sHK;4k95u7P0UCh<WNN=Bca1zVkx}A&CN|h%sRIY(L$8
+zPsD8)k-*WL7Oz*uVJWatNP;Jfy`T`^=EaECE<|e=zRioVpDY|iKw_h?6l|!9<5;u*
+z?)!j8O5zO<4gr>uV26&|PZvRA3}_wVJTRz0fkS{(c<@F!9wYVvfQrUe(ouk-zM+ZR
+z?hevNrv&{xF?rY=x4WGyR~y0QLZjH<=#GdVH3I-%sqt%#trRWIEtJk%8xd%jWM?C^
+z#;2lR4x%1L5NHE|svdbG3IHp#j*iWp4x|3bHWFiui<s@(z_N+iz71oH3&)yOm?b5c
+zB_%l4tO~KQ`-=8X*nI?$n(#jebVAZnFpFmbD)66{f;puSV|)(A_#DhBg&{U5)wj42
+zk!5fRv}^{(It!<Tq({WXfnk7B_^w??@7armLhRX#b*%waS&3?D3Pf_F5&yM@0h<`5
+zz%X!5pMmZTz0LT~p9N^5|5lumIO!_^D+e2y=^2<g6Bxbo1Ej};qo?PtYQRoR#7s!Q
+zz2#NxmS&Xu)({K*WqVKUY5_1RKEGHP;zU0oBQqPv=uE5&)x^&z#w?tMkvs~tMs){U
+zsz^)<K=pKo=!9vaIy;c(&*DA(8_r3EsE!U~^Nj&JWf*h1x@xKhZV96ja?257z3Ixq
+zNKC?i=|T`x7{oj@9bfgCkQmI&ECA%KmJoex(W6+^XV5CR1Dv@9XrB+eu>mw6b$aSH
+zF!(0y^FMqrY1#w1C|%^gTodw|aTZL*s;@=+tq{FPNDM^N(;cFhoozTL<{{lJL0y|0
+zGc5z*8n?HjA$C2~D~3K!pRds7PirR>Yr`l*>$xCYfQb<O4PoRGoFhRup~W$QE?>N-
+j{`dVW#7Lel|Bd_u!-(D7*aqRk00000NkvXXu0mjfZIF_*
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/linux/icons/hicolor/48x48/apps/io.github.retroboxproject.retroscrappy.png b/packaging/linux/icons/hicolor/48x48/apps/io.github.retroboxproject.retroscrappy.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..5c8a8ed30b14af7eb5505ed3c874ef2eb9474218
+GIT binary patch
+literal 2411
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/linux/icons/hicolor/512x512/apps/io.github.retroboxproject.retroscrappy.png b/packaging/linux/icons/hicolor/512x512/apps/io.github.retroboxproject.retroscrappy.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..bd90d0be8d6499e445279987ec4a9043389d940d
+GIT binary patch
+literal 28425
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/linux/icons/hicolor/64x64/apps/io.github.retroboxproject.retroscrappy.png b/packaging/linux/icons/hicolor/64x64/apps/io.github.retroboxproject.retroscrappy.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..cd98afc378094766e0b99f282a9dcc73d70d97f0
+GIT binary patch
+literal 3041
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/linux/icons/hicolor/scalable/apps/io.github.retroboxproject.retroscrappy.svg b/packaging/linux/icons/hicolor/scalable/apps/io.github.retroboxproject.retroscrappy.svg
+new file mode 100644
+index 0000000..f948b25
+--- /dev/null
++++ b/packaging/linux/icons/hicolor/scalable/apps/io.github.retroboxproject.retroscrappy.svg
+@@ -0,0 +1,50 @@
++<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
++  <defs>
++    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="#2a1150"/>
++      <stop offset="1" stop-color="#0c0a1f"/>
++    </linearGradient>
++    <linearGradient id="sun" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="#ffd23f"/>
++      <stop offset="0.55" stop-color="#ff6b3d"/>
++      <stop offset="1" stop-color="#ff2e88"/>
++    </linearGradient>
++    <linearGradient id="cart" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="#3a2a6e"/>
++      <stop offset="1" stop-color="#1c1440"/>
++    </linearGradient>
++    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
++      <feGaussianBlur stdDeviation="4" result="b"/>
++      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
++    </filter>
++    <clipPath id="sunclip"><circle cx="128" cy="118" r="78"/></clipPath>
++  </defs>
++  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
++  <!-- striped synthwave sun -->
++  <g clip-path="url(#sunclip)">
++    <rect x="40" y="36" width="176" height="170" fill="url(#sun)"/>
++    <rect x="40" y="128" width="176" height="6" fill="#2a1150"/>
++    <rect x="40" y="146" width="176" height="8" fill="#2a1150"/>
++    <rect x="40" y="166" width="176" height="10" fill="#2a1150"/>
++    <rect x="40" y="188" width="176" height="12" fill="#2a1150"/>
++  </g>
++  <!-- horizon grid -->
++  <g stroke="#2bd2ff" stroke-width="3" opacity="0.55" fill="none">
++    <path d="M24 206 H232"/>
++    <path d="M128 206 L128 240 M96 206 L76 240 M160 206 L180 240 M64 206 L28 240 M192 206 L228 240"/>
++  </g>
++  <!-- cartridge -->
++  <g filter="url(#glow)">
++    <path d="M70 92 H170 L186 108 V214 H70 Z" fill="url(#cart)" stroke="#2bd2ff" stroke-width="8" stroke-linejoin="round"/>
++  </g>
++  <rect x="86" y="112" width="84" height="56" rx="8" fill="#f4f1ff"/>
++  <!-- down arrow (scrape) on the label -->
++  <path d="M128 118 V150 M112 136 L128 152 L144 136" fill="none" stroke="#ff2e88" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
++  <g fill="#2bd2ff">
++    <rect x="86" y="186" width="10" height="18" rx="2"/>
++    <rect x="104" y="186" width="10" height="18" rx="2"/>
++    <rect x="122" y="186" width="10" height="18" rx="2"/>
++    <rect x="140" y="186" width="10" height="18" rx="2"/>
++    <rect x="158" y="186" width="10" height="18" rx="2"/>
++  </g>
++</svg>
+diff --git a/data/io.github.retroboxproject.retroscrappy.desktop b/packaging/linux/io.github.retroboxproject.retroscrappy.desktop
+similarity index 86%
+rename from data/io.github.retroboxproject.retroscrappy.desktop
+rename to packaging/linux/io.github.retroboxproject.retroscrappy.desktop
+index c56dd91..6d4e674 100644
+--- a/data/io.github.retroboxproject.retroscrappy.desktop
++++ b/packaging/linux/io.github.retroboxproject.retroscrappy.desktop
+@@ -8,4 +8,4 @@ Icon=io.github.retroboxproject.retroscrappy
+ Terminal=false
+ Categories=Game;Utility;
+ Keywords=emulationstation;batocera;retrobat;retrobox;scraper;gamelist;
+-StartupWMClass=retroscrappy-gui
++StartupWMClass=io.github.retroboxproject.retroscrappy
+diff --git a/packaging/linux/io.github.retroboxproject.retroscrappy.metainfo.xml b/packaging/linux/io.github.retroboxproject.retroscrappy.metainfo.xml
+new file mode 100644
+index 0000000..93b276c
+--- /dev/null
++++ b/packaging/linux/io.github.retroboxproject.retroscrappy.metainfo.xml
+@@ -0,0 +1,30 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<component type="desktop-application">
++  <id>io.github.retroboxproject.retroscrappy</id>
++  <name>Retroscrappy</name>
++  <summary>Scrape metadata and artwork for EmulationStation</summary>
++  <metadata_license>CC0-1.0</metadata_license>
++  <project_license>GPL-3.0-only</project_license>
++  <developer id="io.github.retroboxproject">
++    <name>RetroboxProject</name>
++  </developer>
++  <description>
++    <p>
++      Retroscrappy fills the gamelist.xml files of EmulationStation, as used by
++      Batocera, RetroBat and Retrobox, with descriptions, box art, logos,
++      screenshots and videos from ScreenScraper, SteamGridDB and IGDB.
++    </p>
++    <p>
++      Every field can also be edited by hand, and each item can be fetched
++      individually from the source you choose.
++    </p>
++  </description>
++  <launchable type="desktop-id">io.github.retroboxproject.retroscrappy.desktop</launchable>
++  <url type="homepage">https://github.com/RetroboxProject/retroscrappy</url>
++  <url type="bugtracker">https://github.com/RetroboxProject/retroscrappy/issues</url>
++  <categories>
++    <category>Game</category>
++    <category>Utility</category>
++  </categories>
++  <content_rating type="oars-1.1"/>
++</component>
+diff --git a/packaging/render-icons.sh b/packaging/render-icons.sh
+new file mode 100755
+index 0000000..0d0c180
+--- /dev/null
++++ b/packaging/render-icons.sh
+@@ -0,0 +1,20 @@
++#!/usr/bin/env bash
++# Render the PNG icon sizes (and the in-app window icon) from the SVG master.
++# Run after editing the SVG; the results are committed. Requires rsvg-convert
++# (librsvg2-bin on Debian, librsvg2-tools on Fedora).
++set -euo pipefail
++
++readonly APP_ID="io.github.retroboxproject.retroscrappy"
++ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++readonly ROOT
++readonly HICOLOR="${ROOT}/packaging/linux/icons/hicolor"
++readonly SVG="${HICOLOR}/scalable/apps/${APP_ID}.svg"
++readonly SIZES=(16 24 32 48 64 128 256 512)
++
++for size in "${SIZES[@]}"; do
++    dir="${HICOLOR}/${size}x${size}/apps"
++    mkdir -p "${dir}"
++    rsvg-convert --width "${size}" --height "${size}" "${SVG}" --output "${dir}/${APP_ID}.png"
++done
++cp "${HICOLOR}/256x256/apps/${APP_ID}.png" "${ROOT}/src/retroscrappy/data/icons/retroscrappy.png"
++echo "[ OK ] Icons rendered from ${SVG}"
+diff --git a/packaging/rpm/retroscrappy.spec b/packaging/rpm/retroscrappy.spec
+new file mode 100644
+index 0000000..f784b3a
+--- /dev/null
++++ b/packaging/rpm/retroscrappy.spec
+@@ -0,0 +1,52 @@
++# Built by packaging/build-rpm.sh from a staged tree; not a source RPM.
++%global appid io.github.retroboxproject.retroscrappy
++%global prefix /opt/retroscrappy
++# Python files live in /opt: skip Fedora's automatic Python handling.
++%global __requires_exclude_from ^%{prefix}/.*$
++%global __provides_exclude_from ^%{prefix}/.*$
++%global __brp_python_bytecompile %{nil}
++%global __brp_mangle_shebangs %{nil}
++%global debug_package %{nil}
++
++Name:           retroscrappy
++Version:        %{pkg_version}
++Release:        %{pkg_release}
++Summary:        Metadata and artwork scraper for EmulationStation
++License:        GPL-3.0-only
++URL:            https://github.com/RetroboxProject/retroscrappy
++Packager:       %{pkg_packager}
++BuildArch:      noarch
++
++Requires:       python3 >= 3.11
++Requires:       python3-requests
++Requires:       python3-pyside6
++Recommends:     qt6-qtwayland
++
++%description
++Retroscrappy fills the gamelist.xml files of EmulationStation, as used by
++Batocera, RetroBat and Retrobox, with descriptions, box art, logos,
++screenshots and videos from ScreenScraper, SteamGridDB and IGDB.
++
++It provides a Qt graphical interface (retroscrappy-gui) and a command line
++tool (retroscrappy).
++
++%install
++cp -a %{stage_dir}/. %{buildroot}/
++install -Dm0644 %{license_file} %{buildroot}%{_datadir}/licenses/%{name}/LICENSE
++
++%post
++python3 -m compileall -q %{prefix}/lib > /dev/null 2>&1 || :
++
++%preun
++if [ "$1" -eq 0 ]; then
++    find %{prefix}/lib -type d -name __pycache__ -prune -exec rm -rf {} + 2> /dev/null || :
++fi
++
++%files
++%{prefix}
++%{_bindir}/%{name}
++%{_bindir}/%{name}-gui
++%{_datadir}/applications/%{appid}.desktop
++%{_datadir}/metainfo/%{appid}.metainfo.xml
++%{_datadir}/icons/hicolor/*/apps/%{appid}.*
++%{_datadir}/licenses/%{name}/LICENSE
+diff --git a/pyproject.toml b/pyproject.toml
+index ccd67b5..b7608d2 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [build-system]
+-requires = ["setuptools>=68", "wheel"]
++requires = ["setuptools>=77", "wheel"]
+ build-backend = "setuptools.build_meta"
+ 
+ [project]
+@@ -7,6 +7,8 @@ name = "retroscrappy"
+ dynamic = ["version"]
+ description = "Metadata and media scraper for EmulationStation (Batocera, RetroBat, Retrobox)"
+ readme = "README.md"
++license = "GPL-3.0-only"
++license-files = ["LICENSE"]
+ requires-python = ">=3.11"
+ authors = [{ name = "RetroboxProject" }]
+ keywords = ["emulationstation", "batocera", "retrobat", "retrobox", "scraper", "screenscraper", "steamgriddb"]
+@@ -42,7 +44,7 @@ version = { attr = "retroscrappy.__version__" }
+ where = ["src"]
+ 
+ [tool.setuptools.package-data]
+-"retroscrappy.data" = ["*.toml"]
++"retroscrappy.data" = ["*.toml", "icons/*.png"]
+ 
+ [tool.pytest.ini_options]
+ testpaths = ["tests"]
+diff --git a/python3 b/python3
+deleted file mode 100644
+index e69de29..0000000
+diff --git a/src/retroscrappy/__init__.py b/src/retroscrappy/__init__.py
+index 09b7d77..d244574 100644
+--- a/src/retroscrappy/__init__.py
++++ b/src/retroscrappy/__init__.py
+@@ -5,4 +5,4 @@ Retrobox (``gamelist.xml`` per system folder, media in ``images/``,
+ ``videos/`` and ``manuals/``).
+ """
+ 
+-__version__ = "0.3.0"
++__version__ = "0.4.0"
+diff --git a/src/retroscrappy/core/paths.py b/src/retroscrappy/core/paths.py
+index c5a589f..f52259a 100644
+--- a/src/retroscrappy/core/paths.py
++++ b/src/retroscrappy/core/paths.py
+@@ -38,6 +38,11 @@ def config_file() -> Path:
+     return config_dir() / "config.ini"
+ 
+ 
++def ui_state_file() -> Path:
++    """Window layout (sizes, column widths); safe to delete."""
++    return config_dir() / "ui.ini"
++
++
+ def user_platforms_file() -> Path:
+     """Optional TOML file extending or overriding the bundled platforms."""
+     return config_dir() / "platforms.toml"
+diff --git a/src/retroscrappy/data/icons/retroscrappy.png b/src/retroscrappy/data/icons/retroscrappy.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..6323cf00893f8a03e42490298f9a4981e046f273
+GIT binary patch
+literal 13281
+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
+JtP(d2{2xIIk<0)9
+
+literal 0
+HcmV?d00001
+
+diff --git a/src/retroscrappy/gui/app.py b/src/retroscrappy/gui/app.py
+index 711715d..fb71cb5 100644
+--- a/src/retroscrappy/gui/app.py
++++ b/src/retroscrappy/gui/app.py
+@@ -3,8 +3,10 @@
+ from __future__ import annotations
+ 
+ import sys
++from importlib import resources
+ 
+ from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
++from PySide6.QtGui import QIcon, QImage, QPixmap
+ from PySide6.QtWidgets import QApplication
+ 
+ from retroscrappy import __version__
+@@ -22,15 +24,26 @@ def _install_qt_translations(app: QApplication) -> None:
+         app.installTranslator(translator)
+ 
+ 
++def _app_icon() -> QIcon:
++    """Theme icon when installed, otherwise the copy bundled with the package."""
++    bundled = resources.files("retroscrappy.data").joinpath("icons/retroscrappy.png")
++    fallback = QIcon()
++    if bundled.is_file():
++        fallback.addPixmap(QPixmap.fromImage(QImage.fromData(bundled.read_bytes())))
++    return QIcon.fromTheme(APP_ID, fallback)
++
++
+ def main() -> int:
+     """Start the graphical interface."""
+     setup_console_logging()
+-    app = QApplication.instance() or QApplication(sys.argv)
++    # argv[0] becomes the X11 WM_CLASS; match the desktop file id.
++    app = QApplication.instance() or QApplication([APP_ID, *sys.argv[1:]])
+     assert isinstance(app, QApplication)
+     app.setApplicationName("Retroscrappy")
+     app.setApplicationVersion(__version__)
+     app.setOrganizationName("RetroboxProject")
+     app.setDesktopFileName(APP_ID)
++    app.setWindowIcon(_app_icon())
+     _install_qt_translations(app)
+     window = MainWindow()
+     window.show()
+diff --git a/src/retroscrappy/gui/main_window.py b/src/retroscrappy/gui/main_window.py
+index 3ab1f7b..b5eb270 100644
+--- a/src/retroscrappy/gui/main_window.py
++++ b/src/retroscrappy/gui/main_window.py
+@@ -14,7 +14,7 @@ from __future__ import annotations
+ 
+ import copy
+ 
+-from PySide6.QtCore import Qt, Slot
++from PySide6.QtCore import QByteArray, QSettings, Qt, Slot
+ from PySide6.QtGui import QAction, QCloseEvent, QIcon, QKeySequence
+ from PySide6.QtWidgets import (
+     QDockWidget,
+@@ -80,6 +80,7 @@ class MainWindow(QMainWindow):
+         self._build_toolbar()
+         self._build_central()
+         self._build_activity_dock()
++        self._restore_layout()
+         self._rescan()
+ 
+     # ── Construction ─────────────────────────────────────────────────────
+@@ -112,6 +113,7 @@ class MainWindow(QMainWindow):
+         self._empty.settings_requested.connect(self._open_settings_window)
+ 
+         splitter = QSplitter(Qt.Orientation.Horizontal)
++        splitter.setObjectName("library-splitter")
+         splitter.addWidget(self._systems)
+         splitter.addWidget(self._games)
+         splitter.addWidget(self._editor)
+@@ -314,8 +316,37 @@ class MainWindow(QMainWindow):
+             pick_media(self, question.query, question.kind, question.provider, question.options)
+         )
+ 
++    # ── Layout persistence ───────────────────────────────────────────────
++
++    @staticmethod
++    def _ui_state() -> QSettings:
++        return QSettings(str(paths.ui_state_file()), QSettings.Format.IniFormat)
++
++    def _restore_layout(self) -> None:
++        state = self._ui_state()
++        for key, restore in (
++            ("window/geometry", self.restoreGeometry),
++            ("window/state", self.restoreState),
++            ("library/splitter", self._stack.widget(_PAGE_LIBRARY).restoreState),
++        ):
++            value = state.value(key)
++            if isinstance(value, QByteArray):
++                restore(value)
++        header = state.value("library/columns")
++        if isinstance(header, QByteArray):
++            self._games.restore_header(bytes(header.data()))
++
++    def _save_layout(self) -> None:
++        state = self._ui_state()
++        state.setValue("window/geometry", self.saveGeometry())
++        state.setValue("window/state", self.saveState())
++        state.setValue("library/splitter", self._stack.widget(_PAGE_LIBRARY).saveState())
++        state.setValue("library/columns", QByteArray(self._games.header_state()))
++        state.sync()
++
+     def closeEvent(self, event: QCloseEvent) -> None:  # pylint: disable=invalid-name
+-        """Stop any running scrape before closing."""
++        """Stop any running scrape and remember the layout before closing."""
++        self._save_layout()
+         if self._worker and self._worker.running:
+             self._worker.cancel()
+         get_logger().removeHandler(self._log_handler)
+diff --git a/src/retroscrappy/gui/panels.py b/src/retroscrappy/gui/panels.py
+index ced0928..2c090a0 100644
+--- a/src/retroscrappy/gui/panels.py
++++ b/src/retroscrappy/gui/panels.py
+@@ -4,7 +4,7 @@ from __future__ import annotations
+ 
+ import logging
+ 
+-from PySide6.QtCore import QItemSelectionModel, Qt, Signal, Slot
++from PySide6.QtCore import QByteArray, QItemSelectionModel, Qt, Signal, Slot
+ from PySide6.QtGui import QCursor
+ from PySide6.QtWidgets import (
+     QAbstractItemView,
+@@ -133,9 +133,13 @@ class GamesPanel(QWidget):
+         self._view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+         self._view.verticalHeader().hide()
+         header = self._view.horizontalHeader()
+-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
++        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
++        header.setStretchLastSection(False)
++        header.setSectionsMovable(True)
++        header.setMinimumSectionSize(40)
++        header.resizeSection(0, 260)
+         for column in range(1, self._model.columnCount()):
+-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
++            self._view.resizeColumnToContents(column)
+         self._view.selectionModel().currentRowChanged.connect(self._emit_current)
+         self._view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+         self._view.customContextMenuRequested.connect(self._context_menu)
+@@ -182,6 +186,15 @@ class GamesPanel(QWidget):
+         else:
+             self.game_selected.emit(None)
+ 
++    def header_state(self) -> bytes:
++        """Column widths, order and sort, for :meth:`restore_header`."""
++        return bytes(self._view.horizontalHeader().saveState().data())
++
++    def restore_header(self, state: bytes) -> None:
++        """Restore what :meth:`header_state` returned (ignored if invalid)."""
++        if state:
++            self._view.horizontalHeader().restoreState(QByteArray(state))
++
+     def selected_rel_paths(self) -> set[str]:
+         """ROM paths of the selected rows."""
+         return {
+-- 
+2.43.0
+

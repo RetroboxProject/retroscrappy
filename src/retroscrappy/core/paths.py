@@ -38,6 +38,11 @@ def config_file() -> Path:
     return config_dir() / "config.ini"
 
 
+def ui_state_file() -> Path:
+    """Window layout (sizes, column widths); safe to delete."""
+    return config_dir() / "ui.ini"
+
+
 def user_platforms_file() -> Path:
     """Optional TOML file extending or overriding the bundled platforms."""
     return config_dir() / "platforms.toml"

@@ -1,0 +1,17 @@
+Package: retroscrappy
+Version: @VERSION@
+Architecture: all
+Maintainer: @MAINTAINER@
+Installed-Size: @INSTALLED_SIZE@
+Depends: python3 (>= 3.11), python3-requests, python3-pyside6.qtcore, python3-pyside6.qtgui, python3-pyside6.qtwidgets
+Recommends: qt6-wayland
+Section: games
+Priority: optional
+Homepage: https://github.com/RetroboxProject/retroscrappy
+Description: metadata and artwork scraper for EmulationStation
+ Retroscrappy fills the gamelist.xml files of EmulationStation, as used by
+ Batocera, RetroBat and Retrobox, with descriptions, box art, logos,
+ screenshots and videos from ScreenScraper, SteamGridDB and IGDB.
+ .
+ It provides a Qt graphical interface (retroscrappy-gui) and a command
+ line tool (retroscrappy).

@@ -19,14 +19,28 @@ those frontends expect.
 
 ## Install
 
-Requires Python 3.11+.
+**Debian 13+, Ubuntu 25.04+, Fedora:** download the `.deb` or `.rpm` from
+the [latest release](https://github.com/RetroboxProject/retroscrappy/releases/latest)
+and install it with your package manager (`sudo apt install ./retroscrappy_*_all.deb`
+or `sudo dnf install ./retroscrappy-*.noarch.rpm`). It adds *Retroscrappy*
+to the application menu.
+
+**Immutable systems (Fedora Atomic, SteamOS, Bazzite...) or older
+distributions:** use `install.sh`, which installs into a private virtual
+environment and adds the menu entry. Python 3.11+ is required.
 
 ```bash
-pip install .            # CLI only
-pip install '.[gui]'     # CLI + graphical interface
+curl -fsSL https://raw.githubusercontent.com/RetroboxProject/retroscrappy/main/install.sh | bash
+# options: --system (all users, needs sudo), --version vX.Y.Z, --no-gui, --uninstall
 ```
 
-For development: `pip install -e '.[gui,dev]'`.
+**From source**, for development (Python 3.11+):
+
+```bash
+pip install -e '.[gui,dev]'
+```
+
+See [packaging/README.md](packaging/README.md) for how packages are built.
 
 ## Graphical interface
 
@@ -41,6 +55,8 @@ The window goes from general to specific:
 2. **Games** (middle): games of the highlighted system with a ✔ for each
    piece of data they already have. Filter by name or show only incomplete
    games. Games in *italics* are on disk but not in `gamelist.xml` yet.
+   Columns can be resized and reordered; widths, panel sizes and the
+   window layout are remembered (`~/.config/retroscrappy/ui.ini`).
 3. **Game editor** (right): media and metadata of the selected game.
    - Click any media box (box art, logo, screenshot, video...) to fetch it
      from a source, pick a file from your computer, open it or remove it.
@@ -136,8 +152,12 @@ src/retroscrappy/
 ├── data/        bundled platform table
 └── cli.py       command line
 tests/           pytest suite (no network)
-packaging/       notes for future deb/rpm/PyPI packages
-data/            desktop entry
+packaging/       .deb/.rpm build scripts, desktop entry, icon, AppStream data
+install.sh       installer for immutable systems (virtual environment)
 ```
 
 Code checks: `pylint src/retroscrappy` and `pytest`.
+
+## License
+
+GPL-3.0-only. See [LICENSE](LICENSE).

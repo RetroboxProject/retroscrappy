@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# RPM spec of this project (the *.spec rule above is for PyInstaller)
+!packaging/rpm/*.spec

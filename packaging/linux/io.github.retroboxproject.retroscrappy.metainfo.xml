@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.retroboxproject.retroscrappy</id>
+  <name>Retroscrappy</name>
+  <summary>Scrape metadata and artwork for EmulationStation</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <developer id="io.github.retroboxproject">
+    <name>RetroboxProject</name>
+  </developer>
+  <description>
+    <p>
+      Retroscrappy fills the gamelist.xml files of EmulationStation, as used by
+      Batocera, RetroBat and Retrobox, with descriptions, box art, logos,
+      screenshots and videos from ScreenScraper, SteamGridDB and IGDB.
+    </p>
+    <p>
+      Every field can also be edited by hand, and each item can be fetched
+      individually from the source you choose.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.retroboxproject.retroscrappy.desktop</launchable>
+  <url type="homepage">https://github.com/RetroboxProject/retroscrappy</url>
+  <url type="bugtracker">https://github.com/RetroboxProject/retroscrappy/issues</url>
+  <categories>
+    <category>Game</category>
+    <category>Utility</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+</component>
