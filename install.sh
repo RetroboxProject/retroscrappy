@@ -115,7 +115,7 @@ find_python() {
 # Set SOURCE_DIR to a source tree: this clone, or a downloaded archive.
 fetch_source() {
     local here
-    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2> /dev/null && pwd || true)"
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2> /dev/null && pwd)" || here=""
     if [[ -z "${REF}" && -n "${here}" && -f "${here}/pyproject.toml" \
         && -d "${here}/src/${APP_NAME}" ]]; then
         log_info "Installing from the local tree ${here}"
