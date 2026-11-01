@@ -44,7 +44,7 @@ version = { attr = "retroscrappy.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-"retroscrappy.data" = ["*.toml", "icons/*.png"]
+"retroscrappy.data" = ["*.toml", "icons/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

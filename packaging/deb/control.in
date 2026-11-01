@@ -3,7 +3,7 @@ Version: @VERSION@
 Architecture: all
 Maintainer: @MAINTAINER@
 Installed-Size: @INSTALLED_SIZE@
-Depends: python3 (>= 3.11), python3-requests, python3-pyside6.qtcore, python3-pyside6.qtgui, python3-pyside6.qtwidgets
+Depends: python3 (>= 3.11), python3-requests, python3-pyside6.qtcore, python3-pyside6.qtgui, python3-pyside6.qtwidgets, python3-pyside6.qtsvg
 Recommends: qt6-wayland
 Section: games
 Priority: optional

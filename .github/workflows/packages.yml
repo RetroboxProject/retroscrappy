@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Packaging tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends rpm
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends rpm librsvg2-bin
 
       - name: Build .deb
         run: packaging/build-deb.sh
@@ -108,6 +108,7 @@ jobs:
             from retroscrappy.gui.main_window import MainWindow; MainWindow()"
           test -f /usr/share/applications/io.github.retroboxproject.retroscrappy.desktop
           test -f /usr/share/icons/hicolor/scalable/apps/io.github.retroboxproject.retroscrappy.svg
+          test -f /usr/share/icons/hicolor/48x48/apps/io.github.retroboxproject.retroscrappy.png
 
       - name: Remove cleanly
         run: |

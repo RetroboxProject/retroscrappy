@@ -5,8 +5,9 @@ from __future__ import annotations
 import sys
 from importlib import resources
 
-from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
-from PySide6.QtGui import QIcon, QImage, QPixmap
+from PySide6.QtCore import QByteArray, QLibraryInfo, QLocale, Qt, QTranslator
+from PySide6.QtGui import QIcon, QPainter, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication
 
 from retroscrappy import __version__
@@ -14,6 +15,7 @@ from retroscrappy.core.logs import setup_console_logging
 from retroscrappy.gui.main_window import MainWindow
 
 APP_ID = "io.github.retroboxproject.retroscrappy"
+ICON_SIZES = (16, 32, 48, 64, 128, 256)
 
 
 def _install_qt_translations(app: QApplication) -> None:
@@ -25,11 +27,18 @@ def _install_qt_translations(app: QApplication) -> None:
 
 
 def _app_icon() -> QIcon:
-    """Theme icon when installed, otherwise the copy bundled with the package."""
-    bundled = resources.files("retroscrappy.data").joinpath("icons/retroscrappy.png")
+    """Theme icon when installed, otherwise rendered from the bundled SVG."""
+    svg = resources.files("retroscrappy.data").joinpath(f"icons/{APP_ID}.svg")
     fallback = QIcon()
-    if bundled.is_file():
-        fallback.addPixmap(QPixmap.fromImage(QImage.fromData(bundled.read_bytes())))
+    renderer = QSvgRenderer(QByteArray(svg.read_bytes())) if svg.is_file() else None
+    if renderer is not None and renderer.isValid():
+        for size in ICON_SIZES:
+            pixmap = QPixmap(size, size)
+            pixmap.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pixmap)
+            renderer.render(painter)
+            painter.end()
+            fallback.addPixmap(pixmap)
     return QIcon.fromTheme(APP_ID, fallback)
 
 

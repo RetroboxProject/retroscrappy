@@ -5,4 +5,4 @@ Retrobox (``gamelist.xml`` per system folder, media in ``images/``,
 ``videos/`` and ``manuals/``).
 """
 
-__version__ = "0.4.0"
+__version__ = "0.3.2"

@@ -17,6 +17,9 @@ readonly STAGE_DIR="${BUILD_DIR}/stage"
 readonly DIST_DIR="${REPO_ROOT}/dist"
 # shellcheck disable=SC2034
 readonly DEFAULT_MAINTAINER="RetroboxProject <retroboxproject@users.noreply.github.com>"
+# The SVG is the only icon in the repository; PNG sizes are rendered from it.
+readonly ICON_SVG="${REPO_ROOT}/src/${APP_NAME}/data/icons/${APP_ID}.svg"
+readonly ICON_SIZES=(16 24 32 48 64 128 256 512)
 
 log() {
     local tag="$1"
@@ -53,6 +56,20 @@ LAUNCHER
     chmod 0755 "${dest}"
 }
 
+# Install the SVG icon and render its PNG sizes into a hicolor theme dir.
+install_icons() {
+    local hicolor="$1" size dir
+    command -v rsvg-convert > /dev/null \
+        || die "rsvg-convert not found (librsvg2-bin on Debian, librsvg2-tools on Fedora)"
+    install -D -m 0644 "${ICON_SVG}" "${hicolor}/scalable/apps/${APP_ID}.svg"
+    for size in "${ICON_SIZES[@]}"; do
+        dir="${hicolor}/${size}x${size}/apps"
+        mkdir -p "${dir}"
+        rsvg-convert --width "${size}" --height "${size}" "${ICON_SVG}" \
+            --output "${dir}/${APP_ID}.png"
+    done
+}
+
 # Build the file tree shared by both package formats in ${STAGE_DIR}.
 stage_tree() {
     rm -rf "${STAGE_DIR}"
@@ -69,7 +86,7 @@ stage_tree() {
 
     install -m 0644 "${REPO_ROOT}/packaging/linux/${APP_ID}.desktop" "${share}/applications/"
     install -m 0644 "${REPO_ROOT}/packaging/linux/${APP_ID}.metainfo.xml" "${share}/metainfo/"
-    cp -r "${REPO_ROOT}/packaging/linux/icons" "${share}/"
+    install_icons "${share}/icons/hicolor"
 
     find "${STAGE_DIR}" -type d -exec chmod 0755 {} +
     find "${STAGE_DIR}" -type f ! -path '*/usr/bin/*' -exec chmod 0644 {} +

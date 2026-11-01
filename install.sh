@@ -156,12 +156,18 @@ install_desktop_files() {
     install -m 0644 "${src}/packaging/linux/${APP_ID}.metainfo.xml" "${SHARE_DIR}/metainfo/"
     record "${SHARE_DIR}/metainfo/${APP_ID}.metainfo.xml"
 
-    local icon rel
-    while IFS= read -r -d '' icon; do
-        rel="${icon#"${src}/packaging/linux/icons/hicolor/"}"
-        install -D -m 0644 "${icon}" "${icons}/${rel}"
-        record "${icons}/${rel}"
-    done < <(find "${src}/packaging/linux/icons/hicolor" -type f -print0)
+    local svg="${src}/src/${APP_NAME}/data/icons/${APP_ID}.svg" size target
+    install -D -m 0644 "${svg}" "${icons}/scalable/apps/${APP_ID}.svg"
+    record "${icons}/scalable/apps/${APP_ID}.svg"
+    # PNG sizes are optional: the scalable SVG is enough for current desktops.
+    if command -v rsvg-convert > /dev/null 2>&1; then
+        for size in 16 24 32 48 64 128 256 512; do
+            target="${icons}/${size}x${size}/apps/${APP_ID}.png"
+            mkdir -p "$(dirname "${target}")"
+            rsvg-convert --width "${size}" --height "${size}" "${svg}" --output "${target}" \
+                && record "${target}"
+        done
+    fi
 
     refresh_desktop_caches
 }

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Retroscrappy application icon: the single source for every icon size.
+  Packages render the PNG sizes from this file at build time.
+  Layers (Inkscape: Layer > Layers and Objects): background, sun, grid,
+  cartridge, label. Colours are defined once in <defs> as gradients and
+  in the "palette" comment below.
+
+  Palette: night #2a1150 → #0c0a1f, sun #ffd23f → #ff6b3d → #ff2e88,
+           neon #2bd2ff, label #f4f1ff, arrow #ff2e88, cartridge #3a2a6e → #1c1440
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     width="256" height="256" viewBox="0 0 256 256">
+  <title>Retroscrappy</title>
+  <defs>
+    <linearGradient id="night" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a1150"/>
+      <stop offset="1" stop-color="#0c0a1f"/>
+    </linearGradient>
+    <linearGradient id="sunset" gradientUnits="userSpaceOnUse" x1="0" y1="40" x2="0" y2="196">
+      <stop offset="0" stop-color="#ffd23f"/>
+      <stop offset="0.55" stop-color="#ff6b3d"/>
+      <stop offset="1" stop-color="#ff2e88"/>
+    </linearGradient>
+    <linearGradient id="cartridge-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a2a6e"/>
+      <stop offset="1" stop-color="#1c1440"/>
+    </linearGradient>
+    <filter id="neon-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g id="background" inkscape:groupmode="layer" inkscape:label="background">
+    <rect id="tile" x="8" y="8" width="240" height="240" rx="52" fill="url(#night)"/>
+  </g>
+
+  <!-- The sun is drawn as arc slices (no clip paths) so that Qt's SVG
+       renderer, used by KDE Plasma for icons, shows it like other renderers. -->
+  <g id="sun" inkscape:groupmode="layer" inkscape:label="sun" fill="url(#sunset)">
+    <path id="sun-cap" d="M 50.64,128 A 78,78 0 1 1 205.36,128 Z"/>
+    <path id="sun-band-1" d="M 51.66,134 A 78,78 0 0 0 55.2,146 L 200.8,146 A 78,78 0 0 0 204.34,134 Z"/>
+    <path id="sun-band-2" d="M 58.8,154 A 78,78 0 0 0 66.52,166 L 189.48,166 A 78,78 0 0 0 197.2,154 Z"/>
+    <path id="sun-band-3" d="M 75.85,176 A 78,78 0 0 0 93.59,188 L 162.41,188 A 78,78 0 0 0 180.15,176 Z"/>
+  </g>
+
+  <g id="grid" inkscape:groupmode="layer" inkscape:label="grid"
+     fill="none" stroke="#2bd2ff" stroke-width="3" opacity="0.55">
+    <path id="horizon" d="M 24,206 H 232"/>
+    <path id="grid-lines"
+          d="M 128,206 V 240 M 96,206 L 76,240 M 160,206 L 180,240 M 64,206 L 28,240 M 192,206 L 228,240"/>
+  </g>
+
+  <g id="cartridge" inkscape:groupmode="layer" inkscape:label="cartridge">
+    <path id="cartridge-shell" d="M 70,92 H 170 L 186,108 V 214 H 70 Z"
+          fill="url(#cartridge-fill)" stroke="#2bd2ff" stroke-width="8"
+          stroke-linejoin="round" filter="url(#neon-glow)"/>
+    <g id="contacts" fill="#2bd2ff">
+      <rect x="86" y="186" width="10" height="18" rx="2"/>
+      <rect x="104" y="186" width="10" height="18" rx="2"/>
+      <rect x="122" y="186" width="10" height="18" rx="2"/>
+      <rect x="140" y="186" width="10" height="18" rx="2"/>
+      <rect x="158" y="186" width="10" height="18" rx="2"/>
+    </g>
+  </g>
+
+  <g id="label" inkscape:groupmode="layer" inkscape:label="label">
+    <rect id="label-sticker" x="86" y="112" width="84" height="56" rx="8" fill="#f4f1ff"/>
+    <path id="download-arrow" d="M 128,118 V 150 M 112,136 L 128,152 L 144,136"
+          fill="none" stroke="#ff2e88" stroke-width="10"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
