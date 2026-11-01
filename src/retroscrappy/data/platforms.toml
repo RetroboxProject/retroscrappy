@@ -1,0 +1,421 @@
+# Bundled platform table.
+#
+# Keys are the system folder names used by Batocera / RetroBat / Retrobox
+# under roms/. Users can add or override entries in
+# ~/.config/retroscrappy/platforms.toml with the same format.
+#
+#   name          Display name
+#   extensions    ROM extensions (lower case, with dot). Folders whose name
+#                 ends in one of them (e.g. "Game.ps3") count as ROMs too.
+#   screenscraper ScreenScraper "systemeid" (omit if unknown)
+#   igdb          IGDB platform ids (omit if unknown)
+#   aliases       Other folder names that mean the same platform
+#   pc            true for PC launcher collections: uses the "pc" source
+#                 priority profile (SteamGridDB first) instead of "console"
+
+[platforms.nes]
+name = "Nintendo Entertainment System"
+extensions = [".nes", ".unf", ".unif", ".zip", ".7z"]
+screenscraper = 3
+igdb = [18, 99]
+aliases = ["famicom"]
+
+[platforms.fds]
+name = "Famicom Disk System"
+extensions = [".fds", ".zip", ".7z"]
+screenscraper = 106
+igdb = [51]
+
+[platforms.snes]
+name = "Super Nintendo"
+extensions = [".sfc", ".smc", ".fig", ".swc", ".bs", ".st", ".zip", ".7z"]
+screenscraper = 4
+igdb = [19, 58]
+aliases = ["sfc", "superfamicom"]
+
+[platforms.n64]
+name = "Nintendo 64"
+extensions = [".z64", ".n64", ".v64", ".zip", ".7z"]
+screenscraper = 14
+igdb = [4]
+
+[platforms.gamecube]
+name = "Nintendo GameCube"
+extensions = [".iso", ".gcm", ".gcz", ".rvz", ".ciso", ".m3u"]
+screenscraper = 13
+igdb = [21]
+aliases = ["gc", "ngc"]
+
+[platforms.wii]
+name = "Nintendo Wii"
+extensions = [".iso", ".wbfs", ".rvz", ".gcz", ".ciso", ".wad", ".m3u"]
+screenscraper = 16
+igdb = [5]
+
+[platforms.wiiu]
+name = "Nintendo Wii U"
+extensions = [".wud", ".wux", ".rpx", ".wua", ".wiiu"]
+screenscraper = 18
+igdb = [41]
+
+[platforms.switch]
+name = "Nintendo Switch"
+extensions = [".nsp", ".xci"]
+screenscraper = 225
+igdb = [130]
+
+[platforms.virtualboy]
+name = "Virtual Boy"
+extensions = [".vb", ".zip", ".7z"]
+screenscraper = 11
+igdb = [87]
+
+[platforms.gb]
+name = "Game Boy"
+extensions = [".gb", ".zip", ".7z"]
+screenscraper = 9
+igdb = [33]
+
+[platforms.gbc]
+name = "Game Boy Color"
+extensions = [".gbc", ".zip", ".7z"]
+screenscraper = 10
+igdb = [22]
+
+[platforms.gba]
+name = "Game Boy Advance"
+extensions = [".gba", ".zip", ".7z"]
+screenscraper = 12
+igdb = [24]
+
+[platforms.nds]
+name = "Nintendo DS"
+extensions = [".nds", ".zip", ".7z"]
+screenscraper = 15
+igdb = [20]
+
+[platforms."3ds"]
+name = "Nintendo 3DS"
+extensions = [".3ds", ".cci", ".cxi", ".cia", ".3dsx", ".app"]
+screenscraper = 17
+igdb = [37]
+aliases = ["n3ds"]
+
+[platforms.pokemini]
+name = "Pokémon Mini"
+extensions = [".min", ".zip", ".7z"]
+screenscraper = 211
+igdb = [166]
+
+[platforms.sg1000]
+name = "Sega SG-1000"
+extensions = [".sg", ".zip", ".7z"]
+screenscraper = 109
+igdb = [84]
+
+[platforms.mastersystem]
+name = "Sega Master System"
+extensions = [".sms", ".zip", ".7z"]
+screenscraper = 2
+igdb = [64]
+aliases = ["sms"]
+
+[platforms.megadrive]
+name = "Sega Mega Drive"
+extensions = [".md", ".gen", ".smd", ".bin", ".zip", ".7z"]
+screenscraper = 1
+igdb = [29]
+aliases = ["genesis", "md"]
+
+[platforms.gamegear]
+name = "Sega Game Gear"
+extensions = [".gg", ".zip", ".7z"]
+screenscraper = 21
+igdb = [35]
+
+[platforms.segacd]
+name = "Sega CD"
+extensions = [".cue", ".chd", ".iso", ".m3u"]
+screenscraper = 20
+igdb = [78]
+aliases = ["megacd"]
+
+[platforms.sega32x]
+name = "Sega 32X"
+extensions = [".32x", ".bin", ".zip", ".7z"]
+screenscraper = 19
+igdb = [30]
+
+[platforms.saturn]
+name = "Sega Saturn"
+extensions = [".cue", ".chd", ".ccd", ".iso", ".m3u"]
+screenscraper = 22
+igdb = [32]
+
+[platforms.dreamcast]
+name = "Sega Dreamcast"
+extensions = [".cdi", ".gdi", ".chd", ".cue", ".m3u"]
+screenscraper = 23
+igdb = [23]
+
+[platforms.naomi]
+name = "Sega NAOMI"
+extensions = [".zip", ".7z", ".lst", ".bin", ".dat"]
+screenscraper = 56
+igdb = [52]
+
+[platforms.atomiswave]
+name = "Sammy Atomiswave"
+extensions = [".zip", ".7z", ".lst", ".bin"]
+screenscraper = 53
+igdb = [52]
+
+[platforms.psx]
+name = "Sony PlayStation"
+extensions = [".cue", ".chd", ".pbp", ".iso", ".img", ".m3u", ".ccd"]
+screenscraper = 57
+igdb = [7]
+aliases = ["ps1", "playstation"]
+
+[platforms.ps2]
+name = "Sony PlayStation 2"
+extensions = [".iso", ".chd", ".cso", ".bin", ".m3u", ".gz"]
+screenscraper = 58
+igdb = [8]
+
+[platforms.ps3]
+name = "Sony PlayStation 3"
+extensions = [".ps3", ".pkg", ".iso"]
+screenscraper = 59
+igdb = [9]
+
+[platforms.psp]
+name = "Sony PSP"
+extensions = [".iso", ".cso", ".pbp", ".chd"]
+screenscraper = 61
+igdb = [38]
+
+[platforms.psvita]
+name = "Sony PS Vita"
+extensions = [".psvita", ".vpk", ".zip"]
+screenscraper = 62
+igdb = [46]
+
+[platforms.xbox]
+name = "Microsoft Xbox"
+extensions = [".iso", ".xiso"]
+screenscraper = 32
+igdb = [11]
+
+[platforms.pcengine]
+name = "PC Engine"
+extensions = [".pce", ".zip", ".7z"]
+screenscraper = 31
+igdb = [86]
+aliases = ["tg16", "turbografx16"]
+
+[platforms.pcenginecd]
+name = "PC Engine CD"
+extensions = [".cue", ".chd", ".ccd", ".m3u"]
+screenscraper = 114
+igdb = [150]
+aliases = ["tg16cd"]
+
+[platforms.pcfx]
+name = "NEC PC-FX"
+extensions = [".cue", ".chd", ".ccd", ".m3u"]
+screenscraper = 72
+igdb = [274]
+
+[platforms.neogeo]
+name = "Neo Geo"
+extensions = [".zip", ".7z"]
+screenscraper = 142
+igdb = [80, 79]
+
+[platforms.neogeocd]
+name = "Neo Geo CD"
+extensions = [".cue", ".chd", ".m3u"]
+screenscraper = 70
+igdb = [136]
+
+[platforms.ngp]
+name = "Neo Geo Pocket"
+extensions = [".ngp", ".zip", ".7z"]
+screenscraper = 25
+igdb = [119]
+
+[platforms.ngpc]
+name = "Neo Geo Pocket Color"
+extensions = [".ngc", ".ngpc", ".zip", ".7z"]
+screenscraper = 82
+igdb = [120]
+
+[platforms.mame]
+name = "Arcade (MAME)"
+extensions = [".zip", ".7z", ".chd"]
+screenscraper = 75
+igdb = [52]
+aliases = ["arcade", "mame2003", "mame2003plus", "mame2010"]
+
+[platforms.fbneo]
+name = "Arcade (FinalBurn Neo)"
+extensions = [".zip", ".7z"]
+screenscraper = 75
+igdb = [52]
+aliases = ["fba", "fbalpha"]
+
+[platforms.atari2600]
+name = "Atari 2600"
+extensions = [".a26", ".bin", ".zip", ".7z"]
+screenscraper = 26
+igdb = [59]
+
+[platforms.atari5200]
+name = "Atari 5200"
+extensions = [".a52", ".bin", ".zip", ".7z"]
+screenscraper = 40
+igdb = [66]
+
+[platforms.atari7800]
+name = "Atari 7800"
+extensions = [".a78", ".bin", ".zip", ".7z"]
+screenscraper = 41
+igdb = [60]
+
+[platforms.lynx]
+name = "Atari Lynx"
+extensions = [".lnx", ".zip", ".7z"]
+screenscraper = 28
+igdb = [61]
+
+[platforms.jaguar]
+name = "Atari Jaguar"
+extensions = [".j64", ".jag", ".zip", ".7z"]
+screenscraper = 27
+igdb = [62]
+
+[platforms.wswan]
+name = "WonderSwan"
+extensions = [".ws", ".zip", ".7z"]
+screenscraper = 45
+igdb = [57]
+
+[platforms.wswanc]
+name = "WonderSwan Color"
+extensions = [".wsc", ".zip", ".7z"]
+screenscraper = 46
+igdb = [123]
+
+[platforms.colecovision]
+name = "ColecoVision"
+extensions = [".col", ".rom", ".zip", ".7z"]
+screenscraper = 48
+igdb = [68]
+
+[platforms.intellivision]
+name = "Intellivision"
+extensions = [".int", ".bin", ".rom", ".zip", ".7z"]
+screenscraper = 115
+igdb = [67]
+
+[platforms.vectrex]
+name = "Vectrex"
+extensions = [".vec", ".bin", ".zip", ".7z"]
+screenscraper = 102
+igdb = [70]
+
+[platforms."3do"]
+name = "3DO"
+extensions = [".iso", ".chd", ".cue"]
+screenscraper = 29
+igdb = [50]
+
+[platforms.msx1]
+name = "MSX"
+extensions = [".rom", ".mx1", ".dsk", ".cas", ".zip", ".7z"]
+screenscraper = 113
+igdb = [27]
+aliases = ["msx"]
+
+[platforms.msx2]
+name = "MSX2"
+extensions = [".rom", ".mx2", ".dsk", ".cas", ".zip", ".7z"]
+screenscraper = 116
+igdb = [53]
+
+[platforms.c64]
+name = "Commodore 64"
+extensions = [".d64", ".t64", ".prg", ".crt", ".tap", ".m3u", ".zip", ".7z"]
+screenscraper = 66
+igdb = [15]
+
+[platforms.amiga500]
+name = "Amiga"
+extensions = [".adf", ".ipf", ".lha", ".hdf", ".m3u", ".zip", ".7z"]
+screenscraper = 64
+igdb = [16]
+aliases = ["amiga"]
+
+[platforms.amstradcpc]
+name = "Amstrad CPC"
+extensions = [".dsk", ".cdt", ".sna", ".m3u", ".zip", ".7z"]
+screenscraper = 65
+igdb = [25]
+
+[platforms.zxspectrum]
+name = "ZX Spectrum"
+extensions = [".tzx", ".tap", ".z80", ".sna", ".dsk", ".zip", ".7z"]
+screenscraper = 76
+igdb = [26]
+
+[platforms.x68000]
+name = "Sharp X68000"
+extensions = [".dim", ".hdf", ".xdf", ".m3u", ".zip", ".7z"]
+screenscraper = 79
+igdb = [121]
+
+[platforms.dos]
+name = "MS-DOS"
+extensions = [".pc", ".dos", ".dosz", ".zip", ".exe"]
+screenscraper = 135
+igdb = [13]
+aliases = ["pc", "dosbox"]
+
+[platforms.scummvm]
+name = "ScummVM"
+extensions = [".scummvm", ".svm"]
+screenscraper = 123
+igdb = [6, 13]
+
+[platforms.windows]
+name = "Windows"
+extensions = [".wine", ".exe", ".lnk", ".bat", ".pc", ".wsquashfs"]
+screenscraper = 138
+igdb = [6]
+pc = true
+aliases = ["windows_installers", "pcwindows"]
+
+[platforms.steam]
+name = "Steam"
+extensions = [".steam"]
+igdb = [6, 3]
+pc = true
+
+[platforms.heroic]
+name = "Heroic"
+extensions = [".heroic"]
+igdb = [6, 3]
+pc = true
+
+[platforms.lutris]
+name = "Lutris"
+extensions = [".lynx", ".lutris"]
+igdb = [6, 3]
+pc = true
+
+[platforms.ports]
+name = "Ports"
+extensions = [".sh", ".squashfs"]
+igdb = [6, 3]
+pc = true

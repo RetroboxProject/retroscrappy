@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Retroscrappy
+GenericName=Game library scraper
+Comment=Scrape metadata and artwork for EmulationStation (Batocera, RetroBat, Retrobox)
+Exec=retroscrappy-gui
+Icon=io.github.retroboxproject.retroscrappy
+Terminal=false
+Categories=Game;Utility;
+Keywords=emulationstation;batocera;retrobat;retrobox;scraper;gamelist;
+StartupWMClass=retroscrappy-gui

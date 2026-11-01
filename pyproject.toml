@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "retroscrappy"
+dynamic = ["version"]
+description = "Metadata and media scraper for EmulationStation (Batocera, RetroBat, Retrobox)"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "RetroboxProject" }]
+keywords = ["emulationstation", "batocera", "retrobat", "retrobox", "scraper", "screenscraper", "steamgriddb"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: Games/Entertainment",
+]
+dependencies = ["requests>=2.28"]
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.5"]
+dev = ["pylint>=3", "pytest>=7"]
+
+[project.scripts]
+retroscrappy = "retroscrappy.cli:main"
+
+[project.gui-scripts]
+retroscrappy-gui = "retroscrappy.gui.app:main"
+
+[project.urls]
+Homepage = "https://github.com/RetroboxProject/retroscrappy"
+
+[tool.setuptools.dynamic]
+version = { attr = "retroscrappy.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"retroscrappy.data" = ["*.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pylint.main]
+extension-pkg-allow-list = ["PySide6"]
+
+[tool.pylint.typecheck]
+# PySide6 signals are descriptors pylint cannot introspect.
+generated-members = ["connect", "disconnect", "emit"]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint.design]
+max-attributes = 10
+max-args = 6
+min-public-methods = 0
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]

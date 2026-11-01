@@ -1,79 +1,129 @@
-# SteamGridDB Artwork Downloader
+# Retroscrappy
 
-Aplicación gráfica que descarga `marquee` y `thumb` desde SteamGridDB para
-las colecciones `steam/`, `heroic/` y `lutris/` de EmulationStation, y
-actualiza el `gamelist.xml` correspondiente.
+Metadata and artwork scraper for **EmulationStation** as used by
+**Batocera**, **RetroBat** and **Retrobox**. It reads your `roms/` folder,
+fills each system's `gamelist.xml` and downloads media into the folders
+those frontends expect.
 
-## Instalación
+- Works with **any platform** in your ROM folder: known systems are
+  recognised by folder name (or from `es_systems.cfg`), unknown ones are
+  scraped by name.
+- Three sources, tried in an order you choose per item:
+  - **ScreenScraper**: identifies ROMs by file name, size and hash, so
+    matches are exact. Best for consoles and arcade.
+  - **SteamGridDB**: covers, logos and heroes. Best for PC launchers
+    (Steam, Heroic, Lutris).
+  - **IGDB**: metadata, covers, screenshots and artwork.
+- Only fills what is missing unless you ask it to overwrite.
+- Graphical interface (PySide6) and a command line for unattended runs.
+
+## Install
+
+Requires Python 3.11+.
 
 ```bash
-pip install -r requirements.txt
+pip install .            # CLI only
+pip install '.[gui]'     # CLI + graphical interface
 ```
 
-## Uso
+For development: `pip install -e '.[gui,dev]'`.
+
+## Graphical interface
 
 ```bash
-python main.py
+retroscrappy-gui
 ```
 
-Desde la ventana:
-1. **Examinar…** para elegir la carpeta `roms/` (ya no hace falta tocar código
-   ni depender de `retrobox_paths`).
-2. Pega tu API key de SteamGridDB.
-3. Marca los sistemas a procesar.
-4. Si activas *"Elegir imágenes manualmente"*, para cada asset se abre una
-   galería de miniaturas (al estilo Playnite) donde haces click en la que
-   quieras usar. Si lo dejas desactivado, se coge automáticamente la de
-   mejor puntuación neta (upvotes − downvotes).
-5. Si hay varios juegos candidatos en SteamGridDB con un nombre ambiguo, se
-   abre un diálogo para elegir cuál es.
+The window goes from general to specific:
 
-El proceso corre en segundo plano: la ventana no se congela mientras se
-buscan o descargan imágenes, y se puede **Cancelar** en cualquier momento
-(se detiene tras terminar el juego en curso).
+1. **Systems** (left): every system found in your ROM folder. Tick the
+   ones you want to scrape.
+2. **Games** (middle): games of the highlighted system with a ✔ for each
+   piece of data they already have. Filter by name or show only incomplete
+   games. Games in *italics* are on disk but not in `gamelist.xml` yet.
+3. **Game** (right): artwork and metadata of the selected game.
 
-## Estructura del proyecto
+**Scrape…** opens one dialog with three questions: which games (selected,
+current system or ticked systems), what to fetch, and how many questions to
+ask (*Automatic*, *Ask when unsure*, *Always ask*). Progress and the log are
+shown at the bottom.
 
-```
-main.py                        # arranque de la app
-sgdb_artwork/
-    config.py                  # constantes (sistemas soportados, tipos de asset, etc.)
-    clean.py                   # normalización de nombres de fichero
-    models.py                  # dataclasses (GameCandidate, ImageCandidate, ...)
-    gamelist_io.py              # leer/actualizar gamelist.xml
-    downloader.py               # descarga de ficheros y de previsualizaciones
-    sgdb_client.py               # envoltorio sobre el paquete `steamgrid`
-    interaction.py               # contrato entre lógica y GUI (Protocol)
-    worker.py                    # orquestación: recorre roms/, decide qué descargar
-    gui/
-        folder_picker.py         # diálogo para elegir roms/
-        game_picker.py            # diálogo para desambiguar juego
-        image_picker.py            # galería de miniaturas estilo Playnite
-        bridge.py                  # puente thread-safe worker <-> tkinter
-        main_window.py              # ventana principal (formulario + log)
+**Settings** holds everything that is configured once: library location,
+accounts, source order, language and regions, and scrape defaults.
+
+## Command line
+
+```bash
+retroscrappy systems                       # systems, ROM counts and coverage
+retroscrappy scrape                        # scrape with your defaults
+retroscrappy scrape -s snes -s megadrive --media thumbnail,marquee --mode auto
+retroscrappy scrape -s psx --game "Final Fantasy VII.m3u" --overwrite
+retroscrappy check                         # test credentials
+retroscrappy config                        # where settings live (secrets masked)
 ```
 
-### Por qué está dividido así
+Without a terminal attached (cron, systemd) the scrape runs in automatic mode.
 
-- **`worker.py` no importa tkinter.** Habla con el usuario a través de la
-  interfaz `UserInteraction` (`interaction.py`). Esto permite probar toda la
-  lógica de negocio sin abrir ninguna ventana, y si el día de mañana se
-  quisiera una interfaz web o un modo CLI, solo haría falta escribir otra
-  implementación de `UserInteraction`.
-- **`sgdb_client.py` aísla la librería externa `steamgrid`.** Si esa
-  librería cambia de API, el impacto se limita a un fichero.
-- **`gui/bridge.py` resuelve el problema de hilos.** El scraping ocurre en
-  un hilo de fondo para no congelar la ventana; los diálogos modales
-  (elegir juego / elegir imagen) se crean siempre en el hilo principal de
-  tkinter y el resultado se devuelve al hilo de fondo mediante una cola.
-- **Cada pieza de GUI es un fichero pequeño e independiente**
-  (`folder_picker`, `game_picker`, `image_picker`), fácil de encontrar y
-  modificar sin tocar el resto.
+## Configuration
 
-## Notas
+Settings are stored in `~/.config/retroscrappy/config.ini`
+(`%APPDATA%\retroscrappy\config.ini` on Windows) with owner-only
+permissions, as it contains API credentials. Settings from the previous
+version (`~/.config/sgdb-scraper/config.ini`) are imported on first run.
 
-- Las previsualizaciones de la galería de imágenes se descargan en el hilo
-  de fondo antes de abrir el diálogo, así que abrir la galería no bloquea
-  la interfaz.
-- Los `-image.png` los sigue gestionando ScreenScraper, como en el script
-  original; este proyecto solo toca `-marquee.png` y `-thumb.png`.
+### Credentials
+
+| Source | What you need |
+|---|---|
+| ScreenScraper | Developer id/password (ask on the screenscraper.fr forum) and, optionally, your user account for higher quotas |
+| SteamGridDB | API key from your SteamGridDB profile |
+| IGDB | Twitch application client id and secret (dev.twitch.tv) |
+
+### Source order
+
+Each item (text metadata, box art, logo, screenshot...) has an ordered list
+of sources for two platform profiles: *consoles & arcade* and *PC
+launchers*. Sources are tried top to bottom until one has the item. Each
+source is queried at most once per game.
+
+### Platforms
+
+The bundled table (`src/retroscrappy/data/platforms.toml`) maps folder
+names to ScreenScraper and IGDB ids and ROM extensions. Add or override
+platforms in `~/.config/retroscrappy/platforms.toml` using the same format.
+
+## Files written
+
+For a ROM `roms/snes/Game (USA).sfc`:
+
+| Item | File | `gamelist.xml` tag |
+|---|---|---|
+| Screenshot | `images/Game (USA)-image.png` | `<image>` |
+| Box art | `images/Game (USA)-thumb.png` | `<thumbnail>` |
+| Logo | `images/Game (USA)-marquee.png` | `<marquee>` |
+| Title screen | `images/Game (USA)-titleshot.png` | `<titleshot>` |
+| Fan art | `images/Game (USA)-fanart.jpg` | `<fanart>` |
+| Box back | `images/Game (USA)-boxback.png` | `<boxback>` |
+| Video | `videos/Game (USA)-video.mp4` | `<video>` |
+| Manual | `manuals/Game (USA)-manual.pdf` | `<manual>` |
+
+Entries are matched by `<path>`; other tags (favourites, play counts...)
+are preserved. Before the first change in a run, the original is copied to
+`gamelist.xml.bak`.
+
+## Project layout
+
+```
+src/retroscrappy/
+├── core/        library model: settings, platforms, gamelist.xml, ROM discovery
+├── providers/   ScreenScraper, SteamGridDB, IGDB behind one interface
+├── pipeline/    scrape runner (no UI code; talks to the UI through protocols)
+├── gui/         PySide6 interface (optional)
+├── data/        bundled platform table
+└── cli.py       command line
+tests/           pytest suite (no network)
+packaging/       notes for future deb/rpm/PyPI packages
+data/            desktop entry
+```
+
+Code checks: `pylint src/retroscrappy` and `pytest`.
